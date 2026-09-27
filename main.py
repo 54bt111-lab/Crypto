@@ -55,32 +55,58 @@ def get_crypto_dict():
     }
 
 
-def fetch_crypto_from_binance():
-    """جلب أسعار الكريبتو والحجم المالي مباشرة من Binance API لمنع الحظر نهائياً"""
-    url = "https://api.binance.com/api/v3/ticker/24hr"
+def fetch_crypto_from_binance_us():
+    """المحاولة الأولى: جلب البيانات عبر Binance.us لتفادي الحظر الأمريكي على GitHub Actions"""
+    url = "https://api.binance.us/api/v3/ticker/24hr"
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+    }
     try:
-        response = requests.get(url, timeout=10)
+        response = requests.get(url, headers=headers, timeout=10)
         response.raise_for_status()
         data = response.json()
 
         df = pd.DataFrame(data)
-        
-        # تحويل الأعمدة إلى أرقام
         df["price"] = df["lastPrice"].astype(float)
         df["change"] = df["priceChangePercent"].astype(float)
-        df["quoteVolume"] = df["quoteVolume"].astype(float)  # القيمة المالية بـ USDT
-        df["volume"] = df["volume"].astype(float)           # عدد القطع
+        df["quoteVolume"] = df["quoteVolume"].astype(float)
         df["ticker"] = df["symbol"]
 
-        # الفلترة: الأزواج المقترنة بـ USDT فقط والارتفاع الإيجابي
         df_usdt = df[df["ticker"].str.endswith("USDT")].copy()
-        
-        # الترتيب حسب نسبة الارتفاع والصعود 24h
         df_sorted = df_usdt.sort_values(by="change", ascending=False)
-        return df_sorted
+        return df_sorted, "Binance US API"
     except Exception as e:
-        print(f"⚠️ خطأ أثناء الاتصال بـ Binance API: {e}")
-        return pd.DataFrame()
+        print(f"⚠️ فشل Binance US API: {e}")
+
+    # المحاولة الثانية (الاحتياطية): جلب البيانات عبر CoinGecko API المفتوح عالمياً
+    try:
+        cg_url = "https://api.coingecko.com/api/v3/coins/markets"
+        params = {
+            "vs_currency": "usd",
+            "order": "price_change_percentage_24h_desc",
+            "per_page": 100,
+            "page": 1,
+            "sparkline": "false"
+        }
+        resp = requests.get(cg_url, params=params, headers=headers, timeout=10)
+        resp.raise_for_status()
+        cg_data = resp.json()
+
+        records = []
+        for coin in cg_data:
+            records.append({
+                "ticker": f"{coin['symbol'].upper()}USDT",
+                "price": float(coin.get("current_price", 0.0)),
+                "change": float(coin.get("price_change_percentage_24h", 0.0)),
+                "quoteVolume": float(coin.get("total_volume", 0.0))
+            })
+
+        df_cg = pd.DataFrame(records)
+        return df_cg, "CoinGecko API (Global)"
+    except Exception as e:
+        print(f"⚠️ فشل CoinGecko API: {e}")
+
+    return pd.DataFrame(), "تعذر الاتصال"
 
 
 def load_seen():
@@ -147,34 +173,33 @@ def main():
     today, counts = load_seen()
     now_time = datetime.now(RIYADH).strftime("%H:%M:%S")
 
-    print(f"⏰ [{now_time}] جاري إجراء الفحص المباشر عبر Binance API...")
+    print(f"⏰ [{now_time}] جاري إجراء الفحص عبر الواجهة المفتوحة...")
 
-    df = fetch_crypto_from_binance()
+    df, source_name = fetch_crypto_from_binance_us()
     crypto_dict = get_crypto_dict()
 
     if df.empty:
-        print("❌ تعذر جلب البيانات.")
-        send("⚠️ تعذر جلب البيانات من المصدر في الوقت الحالي.")
+        print("❌ تعذر جلب البيانات من المصادر.")
+        send("⚠️ تعذر جلب البيانات من المصادر المتاحة حالياً.")
         return
 
-    # التصفية أولاً بناءً على قائمة القاموس المعتمد
+    # التصفية بحسب القاموس
     filtered_df = df[df["ticker"].isin(crypto_dict.keys())]
 
-    # في حال لم توجد نتائج كافية من القاموس، نأخذ أعلى العملات صعوداً في منصة بينانس بالكامل
     if filtered_df.empty or len(filtered_df) < 3:
         filtered_df = df.head(MAX_SHOWN)
 
-    header = "🚨 <b>تحديث سوق الكريبتو (أعلى العملات زخماً وصعوداً)</b>\nℹ️ <i>المصدر: Binance Direct API</i>"
+    header = f"🚨 <b>تحديث سوق الكريبتو (أعلى العملات زخماً)</b>\nℹ️ <i>المصدر: {source_name}</i>"
     blocks = []
 
     for idx, (_, row) in enumerate(filtered_df.head(MAX_SHOWN).iterrows(), 1):
-        ticker = row["ticker"]
+        ticker = str(row["ticker"])
         arabic_name = escape_html(crypto_dict.get(ticker, ticker.replace("USDT", "")))
         tv_url = f"https://www.tradingview.com/chart/?symbol={EXCHANGE_NAME}:{ticker}"
 
         price = float(row["price"])
         change = float(row["change"])
-        usdt_volume = float(row["quoteVolume"]) / 1_000_000  # الحجم المالي بـ ملايين الدولارات
+        usdt_volume = float(row["quoteVolume"]) / 1_000_000
 
         curr_count = counts.get(ticker, 0) + 1
         counts[ticker] = curr_count
