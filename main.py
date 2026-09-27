@@ -48,30 +48,72 @@ def get_crypto_dict():
 
 
 def fetch_crypto_data():
-    """جلب بيانات الكريبتو من تريادنج فيو بصيغة الأعمدة المتوافقة تماماً"""
+    """تطبيق الخيارات الأربعة بالترتيب لضمان اقتناص أفضل الفرص"""
+    
+    # -------------------------------------------------------------------
+    # الخيار 1 & 2: انفجار الحجم النسبي (RVOL) + السيولة الماليّة بالدولار (الأقوى)
+    # -------------------------------------------------------------------
     try:
-        # استعلام جلب أعلى العملات حركة وحجم تداول في الكريبتو
-        q = (
+        q1 = (
             Query()
             .set_markets("crypto")
-            .select("name", "close", "change", "volume")
+            .select("name", "close", "change", "volume", "Value.Traded", "relative_volume_10d_calc")
             .where(
-                col("volume") > 100000,
-                col("change") > 0.0
+                col("Value.Traded") >= 2000000,          # سيولة لا تقل عن 2 مليون دولار (القيمة المالية)
+                col("relative_volume_10d_calc") >= 1.3,  # حجم نسبي أعلى من المتوسط بـ 30%
+                col("change") >= 0.3                     # تغير إيجابي ممتاز
+            )
+            .order_by("relative_volume_10d_calc", ascending=False)
+            .limit(100)
+        )
+        _, df1 = q1.get_scanner_data()
+        if df1 is not None and not df1.empty:
+            df1["ticker"] = df1["name"].astype(str).str.replace(f"{EXCHANGE_NAME}:", "").str.strip()
+            return df1, "🔥 [الخيار 1 & 2] انفجار في الحجم النسبي (RVOL >= 1.3) + سيولة مالية قوية"
+    except Exception as e:
+        print(f"⚠️ الخيار 1/2 لم يرجع نتائج: {e}")
+
+    # -------------------------------------------------------------------
+    # الخيار 3: الفلترة حسب القيمة المالية المتوسطة (تغطية باقي العملات البديلة)
+    # -------------------------------------------------------------------
+    try:
+        q2 = (
+            Query()
+            .set_markets("crypto")
+            .select("name", "close", "change", "volume", "Value.Traded", "relative_volume_10d_calc")
+            .where(
+                col("Value.Traded") >= 500000,  # سيولة مالية 500 ألف دولار على الأقل
+                col("change") >= 0.2
             )
             .order_by("change", ascending=False)
-            .limit(150)
+            .limit(100)
         )
-        _, df = q.get_scanner_data()
-
-        if df is not None and not df.empty:
-            # استخراج رمز العملة الصافي
-            df["ticker"] = df["name"].astype(str).str.replace(f"{EXCHANGE_NAME}:", "").str.strip()
-            return df
+        _, df2 = q2.get_scanner_data()
+        if df2 is not None and not df2.empty:
+            df2["ticker"] = df2["name"].astype(str).str.replace(f"{EXCHANGE_NAME}:", "").str.strip()
+            return df2, "🎯 [الخيار 3] عملات ذات سيولة متوسطة وتغير إيجابي"
     except Exception as e:
-        print(f"⚠️ خطأ أثناء جلب البيانات من TradingView: {e}")
+        print(f"⚠️ الخيار 3 لم يرجع نتائج: {e}")
 
-    return pd.DataFrame()
+    # -------------------------------------------------------------------
+    # الخيار 4: أعلى العملات في التغير والتداول (تغطية السوق العام / الاحتياط)
+    # -------------------------------------------------------------------
+    try:
+        q3 = (
+            Query()
+            .set_markets("crypto")
+            .select("name", "close", "change", "volume", "Value.Traded", "relative_volume_10d_calc")
+            .order_by("change", ascending=False)
+            .limit(50)
+        )
+        _, df3 = q3.get_scanner_data()
+        if df3 is not None and not df3.empty:
+            df3["ticker"] = df3["name"].astype(str).str.replace(f"{EXCHANGE_NAME}:", "").str.strip()
+            return df3, "⚡ [الخيار 4] أعلى العملات صعوداً في السوق حالياً"
+    except Exception as e:
+        print(f"⚠️ الخيار 4 لم يرجع نتائج: {e}")
+
+    return pd.DataFrame(), "لا توجد شروط مطابقة"
 
 
 def load_seen():
@@ -140,22 +182,21 @@ def main():
 
     print(f"⏰ [{now_time}] جاري إجراء الفحص الشامل لعملات الكريبتو...")
 
-    df = fetch_crypto_data()
+    df, condition_info = fetch_crypto_data()
     crypto_dict = get_crypto_dict()
 
     if df.empty:
-        print("❌ لم يتم العثور على نتائج من TradingView.")
-        send("⚠️ لم يجد نظام الفحص أي عملات مطابقة في الوقت الحالي.")
+        print("❌ لم يتم العثور على أي بيانات من TradingView.")
+        send("⚠️ تعذر جلب البيانات من TradingView في الوقت الحالي.")
         return
 
-    # التصفية بحسب القاموس المعتمد
+    # الفلترة بحسب القاموس المعتمد
     filtered_df = df[df["ticker"].isin(crypto_dict.keys())]
 
-    # إذا كانت القائمة المفلترة فارغة، سنأخذ أعلى 10 عملات مرتفعة في السوق مباشرة
     if filtered_df.empty:
         filtered_df = df.head(MAX_SHOWN)
 
-    header = "🚨 <b>تحديث العملات الرقمية الأكثر صعودًا وزخمًا</b>"
+    header = f"🚨 <b>تحديث سوق الكريبتو</b>\nℹ️ <i>{condition_info}</i>"
     blocks = []
 
     for idx, (_, row) in enumerate(filtered_df.head(MAX_SHOWN).iterrows(), 1):
@@ -165,7 +206,8 @@ def main():
 
         price = float(row.get("close", 0.0))
         change = float(row.get("change", 0.0))
-        volume = float(row.get("volume", 0.0))
+        val_traded = float(row.get("Value.Traded", 0.0)) / 1_000_000  # تحويل إلى ملايين الدولارات
+        rvol = float(row.get("relative_volume_10d_calc", 0.0)) if not pd.isna(row.get("relative_volume_10d_calc")) else 0.0
 
         curr_count = counts.get(ticker, 0) + 1
         counts[ticker] = curr_count
@@ -175,8 +217,8 @@ def main():
         lines = [
             f"🔥 <b>#{idx} {arabic_name} ({ticker})</b>",
             f"🚨 🛑 <b>[تنبيه رقم {curr_count}]</b>",
-            f"💵 <b>السعر:</b> ${price:.4f} | <b>التغير:</b> +{change:.2f}%",
-            f"📊 <b>الحجم (Vol):</b> {int(volume):,}",
+            f"💵 <b>السعر:</b> ${price:.4f} | <b>التغير:</b> {change:+.2f}%",
+            f"💰 <b>السيولة (USDT):</b> ${val_traded:.2f}M" + (f" | <b>RVOL:</b> {rvol:.2f}x" if rvol > 0 else ""),
             f"📈 <b>الشارت:</b> <a href='{tv_url}'>فتح في TradingView</a>",
             f"🎯 <b>الأهداف:</b> ${lvl['t1']:.4f} -&gt; ${lvl['t2']:.4f} -&gt; ${lvl['t3']:.4f}",
             f"🛡️ <b>الدعم:</b> ${lvl['support']:.4f} | ⛔️ <b>الوقف:</b> ${lvl['stop_loss']:.4f}",
@@ -193,12 +235,4 @@ def main():
 
 
 if __name__ == "__main__":
-    now_str = datetime.now(RIYADH).strftime("%Y-%m-%d %H:%M:%S")
-    print(f"🚀 [{now_str}] بدء جولة فحص الكريبتو...")
-
-    try:
-        main()
-        print("✅ اكتملت جولة الفحص بنجاح.")
-    except Exception as e:
-        print(f"⚠️ حدث خطأ أثناء تنفيذ الجولة: {e}")
-        sys.exit(1)
+    main()
