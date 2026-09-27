@@ -48,72 +48,45 @@ def get_crypto_dict():
 
 
 def fetch_crypto_data():
-    """تطبيق الخيارات الأربعة بالترتيب لضمان اقتناص أفضل الفرص"""
+    """استعلام مستقر ومباشر دون استخدام أعمدة غير مدعومة"""
     
-    # -------------------------------------------------------------------
-    # الخيار 1 & 2: انفجار الحجم النسبي (RVOL) + السيولة الماليّة بالدولار (الأقوى)
-    # -------------------------------------------------------------------
+    # 1. الاستعلام الأساسي: أعلى العملات صعوداً مع حجم تداول مقبول
     try:
         q1 = (
             Query()
             .set_markets("crypto")
-            .select("name", "close", "change", "volume", "Value.Traded", "relative_volume_10d_calc")
+            .select("name", "close", "change", "volume")
             .where(
-                col("Value.Traded") >= 2000000,          # سيولة لا تقل عن 2 مليون دولار (القيمة المالية)
-                col("relative_volume_10d_calc") >= 1.3,  # حجم نسبي أعلى من المتوسط بـ 30%
-                col("change") >= 0.3                     # تغير إيجابي ممتاز
+                col("volume") >= 10000,
+                col("change") >= 0.1
             )
-            .order_by("relative_volume_10d_calc", ascending=False)
+            .order_by("change", ascending=False)
             .limit(100)
         )
         _, df1 = q1.get_scanner_data()
         if df1 is not None and not df1.empty:
             df1["ticker"] = df1["name"].astype(str).str.replace(f"{EXCHANGE_NAME}:", "").str.strip()
-            return df1, "🔥 [الخيار 1 & 2] انفجار في الحجم النسبي (RVOL >= 1.3) + سيولة مالية قوية"
+            return df1, "🔥 عملات ذات زخَم إيجابي وصعود متواصل"
     except Exception as e:
-        print(f"⚠️ الخيار 1/2 لم يرجع نتائج: {e}")
+        print(f"⚠️ خطأ في الاستعلام الأول: {e}")
 
-    # -------------------------------------------------------------------
-    # الخيار 3: الفلترة حسب القيمة المالية المتوسطة (تغطية باقي العملات البديلة)
-    # -------------------------------------------------------------------
+    # 2. الاستعلام الاحتياطي: ترتيب العملات بحسب الحجم المالي والحركة في السوق
     try:
         q2 = (
             Query()
             .set_markets("crypto")
-            .select("name", "close", "change", "volume", "Value.Traded", "relative_volume_10d_calc")
-            .where(
-                col("Value.Traded") >= 500000,  # سيولة مالية 500 ألف دولار على الأقل
-                col("change") >= 0.2
-            )
-            .order_by("change", ascending=False)
+            .select("name", "close", "change", "volume")
+            .order_by("volume", ascending=False)
             .limit(100)
         )
         _, df2 = q2.get_scanner_data()
         if df2 is not None and not df2.empty:
             df2["ticker"] = df2["name"].astype(str).str.replace(f"{EXCHANGE_NAME}:", "").str.strip()
-            return df2, "🎯 [الخيار 3] عملات ذات سيولة متوسطة وتغير إيجابي"
+            return df2, "📊 أعلى العملات تداولاً وحركة في السوق"
     except Exception as e:
-        print(f"⚠️ الخيار 3 لم يرجع نتائج: {e}")
+        print(f"⚠️ خطأ في الاستعلام الثاني: {e}")
 
-    # -------------------------------------------------------------------
-    # الخيار 4: أعلى العملات في التغير والتداول (تغطية السوق العام / الاحتياط)
-    # -------------------------------------------------------------------
-    try:
-        q3 = (
-            Query()
-            .set_markets("crypto")
-            .select("name", "close", "change", "volume", "Value.Traded", "relative_volume_10d_calc")
-            .order_by("change", ascending=False)
-            .limit(50)
-        )
-        _, df3 = q3.get_scanner_data()
-        if df3 is not None and not df3.empty:
-            df3["ticker"] = df3["name"].astype(str).str.replace(f"{EXCHANGE_NAME}:", "").str.strip()
-            return df3, "⚡ [الخيار 4] أعلى العملات صعوداً في السوق حالياً"
-    except Exception as e:
-        print(f"⚠️ الخيار 4 لم يرجع نتائج: {e}")
-
-    return pd.DataFrame(), "لا توجد شروط مطابقة"
+    return pd.DataFrame(), "تعذر الاتصال"
 
 
 def load_seen():
@@ -190,9 +163,10 @@ def main():
         send("⚠️ تعذر جلب البيانات من TradingView في الوقت الحالي.")
         return
 
-    # الفلترة بحسب القاموس المعتمد
+    # التصفية بحسب القاموس المعتمد
     filtered_df = df[df["ticker"].isin(crypto_dict.keys())]
 
+    # في حال لم تتطابق أي عملة من القاموس مع الفلتر الحالي، أظهر أسرع 10 عملات حركة من نتائج السوق مباشرة
     if filtered_df.empty:
         filtered_df = df.head(MAX_SHOWN)
 
@@ -206,8 +180,7 @@ def main():
 
         price = float(row.get("close", 0.0))
         change = float(row.get("change", 0.0))
-        val_traded = float(row.get("Value.Traded", 0.0)) / 1_000_000  # تحويل إلى ملايين الدولارات
-        rvol = float(row.get("relative_volume_10d_calc", 0.0)) if not pd.isna(row.get("relative_volume_10d_calc")) else 0.0
+        volume = float(row.get("volume", 0.0))
 
         curr_count = counts.get(ticker, 0) + 1
         counts[ticker] = curr_count
@@ -218,7 +191,7 @@ def main():
             f"🔥 <b>#{idx} {arabic_name} ({ticker})</b>",
             f"🚨 🛑 <b>[تنبيه رقم {curr_count}]</b>",
             f"💵 <b>السعر:</b> ${price:.4f} | <b>التغير:</b> {change:+.2f}%",
-            f"💰 <b>السيولة (USDT):</b> ${val_traded:.2f}M" + (f" | <b>RVOL:</b> {rvol:.2f}x" if rvol > 0 else ""),
+            f"📊 <b>حجم التداول (Vol):</b> {int(volume):,}",
             f"📈 <b>الشارت:</b> <a href='{tv_url}'>فتح في TradingView</a>",
             f"🎯 <b>الأهداف:</b> ${lvl['t1']:.4f} -&gt; ${lvl['t2']:.4f} -&gt; ${lvl['t3']:.4f}",
             f"🛡️ <b>الدعم:</b> ${lvl['support']:.4f} | ⛔️ <b>الوقف:</b> ${lvl['stop_loss']:.4f}",
