@@ -110,7 +110,7 @@ def get_crypto_info_dict():
         "PEPEUSDT": {
             "name": "بيبي", 
             "country": "🌐 لا مركزي (عالمي)", 
-            "project": "عملة ميم شهرية تعتمد على الثقافة الرقمية وشعبية مجتمع الكريبتو."
+            "project": "عملة ميم شهيرة تعتمد على الثقافة الرقمية وشعبية مجتمع الكريبتو."
         },
         "SHIBUSDT": {
             "name": "شيبا إينو", 
@@ -299,7 +299,7 @@ def send(text):
         )
         r.raise_for_status()
     except requests.exceptions.HTTPError as e:
-        print(f"خطأ تيليجرام: {e}")
+        print(f"خطأ تيليجرام: {e} - النص المطلوب إرساله: {e.response.text if e.response else ''}")
 
 
 def escape_html(value) -> str:
@@ -350,8 +350,8 @@ def main():
         info = crypto_info.get(ticker, {})
         if isinstance(info, dict):
             arabic_name = escape_html(info.get("name", ticker))
-            country = info.get("country", "🌐 غير محدد")
-            project_desc = info.get("project", "مشروع عملة رقمية مشفرة.")
+            country = escape_html(info.get("country", "🌐 غير محدد"))
+            project_desc = escape_html(info.get("project", "مشروع عملة رقمية مشفرة."))
         else:
             arabic_name = escape_html(info if info else ticker)
             country = "🌐 غير محدد"
@@ -391,10 +391,21 @@ def main():
         ]
         blocks.append("\n".join(lines))
 
+    # تقسيم الرسائل (5 عملات في كل رسالة) لتفادي تجاور 4096 حرفاً في تيليجرام
     if blocks:
-        msg_text = header + "\n\n" + "\n\n".join(blocks)
-        send(msg_text)
-        print(f"✅ تم إرسال {len(blocks)} عملة إلى التلغرام بنجاح.")
+        half = len(blocks) // 2
+        part1 = blocks[:half]
+        part2 = blocks[half:]
+
+        msg1 = header + "\n\n" + "\n\n".join(part1)
+        send(msg1)
+        time.sleep(1)
+
+        if part2:
+            msg2 = "📌 <b>تتمة التقرير:</b>\n\n" + "\n\n".join(part2)
+            send(msg2)
+
+        print(f"✅ تم إرسال {len(blocks)} عملة مقسمة على رسالتين بنجاح.")
 
     save_seen(today, counts)
 
