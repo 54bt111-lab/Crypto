@@ -7,7 +7,6 @@ from zoneinfo import ZoneInfo
 
 import pandas as pd
 import requests
-from tradingview_screener import Query, col
 
 # إعدادات التلغرام من متغيرات البيئة
 TOKEN = os.environ.get("BOT_TOKEN", "")
@@ -21,7 +20,7 @@ MAX_SHOWN = 10
 
 
 def get_crypto_dict():
-    """قاموس العملات الرقمية المعتمدة"""
+    """قاموس أسماء العملات الرقمية باللغة العربية"""
     return {
         "BTCUSDT": "بيتكوين",
         "ETHUSDT": "إيثريوم",
@@ -43,50 +42,45 @@ def get_crypto_dict():
         "PEPEUSDT": "بيبي",
         "SHIBUSDT": "شيبا إينو",
         "WIFUSDT": "دوج ويف هات",
-        "ENAUSDT": "إيثينا"
+        "ENAUSDT": "إيثينا",
+        "ARBUSDT": "أربتروم",
+        "OPUSDT": "أوبتيميزم",
+        "TIAUSDT": "سيليستيا",
+        "SEIUSDT": "سي",
+        "TAOUSDT": "بيتنسور",
+        "UNIUSDT": "يوني سواب",
+        "AAVEUSDT": "آفي",
+        "FLOKIUSDT": "فلوكي",
+        "BONKUSDT": "بونك"
     }
 
 
-def fetch_crypto_data():
-    """استعلام مستقر ومباشر دون استخدام أعمدة غير مدعومة"""
-    
-    # 1. الاستعلام الأساسي: أعلى العملات صعوداً مع حجم تداول مقبول
+def fetch_crypto_from_binance():
+    """جلب أسعار الكريبتو والحجم المالي مباشرة من Binance API لمنع الحظر نهائياً"""
+    url = "https://api.binance.com/api/v3/ticker/24hr"
     try:
-        q1 = (
-            Query()
-            .set_markets("crypto")
-            .select("name", "close", "change", "volume")
-            .where(
-                col("volume") >= 10000,
-                col("change") >= 0.1
-            )
-            .order_by("change", ascending=False)
-            .limit(100)
-        )
-        _, df1 = q1.get_scanner_data()
-        if df1 is not None and not df1.empty:
-            df1["ticker"] = df1["name"].astype(str).str.replace(f"{EXCHANGE_NAME}:", "").str.strip()
-            return df1, "🔥 عملات ذات زخَم إيجابي وصعود متواصل"
-    except Exception as e:
-        print(f"⚠️ خطأ في الاستعلام الأول: {e}")
+        response = requests.get(url, timeout=10)
+        response.raise_for_status()
+        data = response.json()
 
-    # 2. الاستعلام الاحتياطي: ترتيب العملات بحسب الحجم المالي والحركة في السوق
-    try:
-        q2 = (
-            Query()
-            .set_markets("crypto")
-            .select("name", "close", "change", "volume")
-            .order_by("volume", ascending=False)
-            .limit(100)
-        )
-        _, df2 = q2.get_scanner_data()
-        if df2 is not None and not df2.empty:
-            df2["ticker"] = df2["name"].astype(str).str.replace(f"{EXCHANGE_NAME}:", "").str.strip()
-            return df2, "📊 أعلى العملات تداولاً وحركة في السوق"
-    except Exception as e:
-        print(f"⚠️ خطأ في الاستعلام الثاني: {e}")
+        df = pd.DataFrame(data)
+        
+        # تحويل الأعمدة إلى أرقام
+        df["price"] = df["lastPrice"].astype(float)
+        df["change"] = df["priceChangePercent"].astype(float)
+        df["quoteVolume"] = df["quoteVolume"].astype(float)  # القيمة المالية بـ USDT
+        df["volume"] = df["volume"].astype(float)           # عدد القطع
+        df["ticker"] = df["symbol"]
 
-    return pd.DataFrame(), "تعذر الاتصال"
+        # الفلترة: الأزواج المقترنة بـ USDT فقط والارتفاع الإيجابي
+        df_usdt = df[df["ticker"].str.endswith("USDT")].copy()
+        
+        # الترتيب حسب نسبة الارتفاع والصعود 24h
+        df_sorted = df_usdt.sort_values(by="change", ascending=False)
+        return df_sorted
+    except Exception as e:
+        print(f"⚠️ خطأ أثناء الاتصال بـ Binance API: {e}")
+        return pd.DataFrame()
 
 
 def load_seen():
@@ -153,34 +147,34 @@ def main():
     today, counts = load_seen()
     now_time = datetime.now(RIYADH).strftime("%H:%M:%S")
 
-    print(f"⏰ [{now_time}] جاري إجراء الفحص الشامل لعملات الكريبتو...")
+    print(f"⏰ [{now_time}] جاري إجراء الفحص المباشر عبر Binance API...")
 
-    df, condition_info = fetch_crypto_data()
+    df = fetch_crypto_from_binance()
     crypto_dict = get_crypto_dict()
 
     if df.empty:
-        print("❌ لم يتم العثور على أي بيانات من TradingView.")
-        send("⚠️ تعذر جلب البيانات من TradingView في الوقت الحالي.")
+        print("❌ تعذر جلب البيانات.")
+        send("⚠️ تعذر جلب البيانات من المصدر في الوقت الحالي.")
         return
 
-    # التصفية بحسب القاموس المعتمد
+    # التصفية أولاً بناءً على قائمة القاموس المعتمد
     filtered_df = df[df["ticker"].isin(crypto_dict.keys())]
 
-    # في حال لم تتطابق أي عملة من القاموس مع الفلتر الحالي، أظهر أسرع 10 عملات حركة من نتائج السوق مباشرة
-    if filtered_df.empty:
+    # في حال لم توجد نتائج كافية من القاموس، نأخذ أعلى العملات صعوداً في منصة بينانس بالكامل
+    if filtered_df.empty or len(filtered_df) < 3:
         filtered_df = df.head(MAX_SHOWN)
 
-    header = f"🚨 <b>تحديث سوق الكريبتو</b>\nℹ️ <i>{condition_info}</i>"
+    header = "🚨 <b>تحديث سوق الكريبتو (أعلى العملات زخماً وصعوداً)</b>\nℹ️ <i>المصدر: Binance Direct API</i>"
     blocks = []
 
     for idx, (_, row) in enumerate(filtered_df.head(MAX_SHOWN).iterrows(), 1):
         ticker = row["ticker"]
-        arabic_name = escape_html(crypto_dict.get(ticker, ticker))
+        arabic_name = escape_html(crypto_dict.get(ticker, ticker.replace("USDT", "")))
         tv_url = f"https://www.tradingview.com/chart/?symbol={EXCHANGE_NAME}:{ticker}"
 
-        price = float(row.get("close", 0.0))
-        change = float(row.get("change", 0.0))
-        volume = float(row.get("volume", 0.0))
+        price = float(row["price"])
+        change = float(row["change"])
+        usdt_volume = float(row["quoteVolume"]) / 1_000_000  # الحجم المالي بـ ملايين الدولارات
 
         curr_count = counts.get(ticker, 0) + 1
         counts[ticker] = curr_count
@@ -190,8 +184,8 @@ def main():
         lines = [
             f"🔥 <b>#{idx} {arabic_name} ({ticker})</b>",
             f"🚨 🛑 <b>[تنبيه رقم {curr_count}]</b>",
-            f"💵 <b>السعر:</b> ${price:.4f} | <b>التغير:</b> {change:+.2f}%",
-            f"📊 <b>حجم التداول (Vol):</b> {int(volume):,}",
+            f"💵 <b>السعر:</b> ${price:.4f} | <b>التغير 24h:</b> {change:+.2f}%",
+            f"💰 <b>السيولة الماليّة:</b> ${usdt_volume:.2f}M USDT",
             f"📈 <b>الشارت:</b> <a href='{tv_url}'>فتح في TradingView</a>",
             f"🎯 <b>الأهداف:</b> ${lvl['t1']:.4f} -&gt; ${lvl['t2']:.4f} -&gt; ${lvl['t3']:.4f}",
             f"🛡️ <b>الدعم:</b> ${lvl['support']:.4f} | ⛔️ <b>الوقف:</b> ${lvl['stop_loss']:.4f}",
