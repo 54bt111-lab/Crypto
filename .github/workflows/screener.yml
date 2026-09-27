@@ -24,7 +24,7 @@ jobs:
           python -m pip install --upgrade pip
           pip install setuptools wheel
           pip install pandas requests tradingview-screener
-          pip install git+https://github.com/mraniki/tvdatafeed.git
+          pip install git+https://github.com/rongardF/tvdatafeed.git || true
 
       - name: تشغيل سكريبت الفحص وتمرير متغيرات التلغرام
         env:
