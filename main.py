@@ -215,24 +215,13 @@ def get_crypto_info_dict():
     }
 
 
-def fetch_all_crypto_from_binance():
-    """جلب جميع أزواج USDT من بينانس العالمية بطلب واحد بدون حد أقصى للحجم ورصد الأعلى صعوداً"""
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
-    }
-    url = "https://api.binance.com/api/v3/ticker/24hr"
-
-    try:
-        response = requests.get(url, headers=headers, timeout=15)
-        response.raise_for_status()
-        data = response.json()
-
-        records = []
-        for item in data:
-            symbol = item["symbol"]
-
-            # فلترة أزواج USDT فقط واستبعاد العملات ذات الرافعة المالية (UP, DOWN, BULL, BEAR)
-            if symbol.endswith("USDT") and not any(x in symbol for x in ["UPUSDT", "DOWNUSDT", "BULLUSDT", "BEARUSDT"]):
+def parse_ticker_data(data):
+    """معالجة استجابة البيانات وتصفية عملات USDT"""
+    records = []
+    for item in data:
+        symbol = item.get("symbol", "")
+        if symbol.endswith("USDT") and not any(x in symbol for x in ["UPUSDT", "DOWNUSDT", "BULLUSDT", "BEARUSDT"]):
+            try:
                 price = float(item["lastPrice"])
                 change = float(item["priceChangePercent"])
                 volume = float(item["quoteVolume"])
@@ -250,17 +239,81 @@ def fetch_all_crypto_from_binance():
                         "low_52": low,
                         "pct_from_low": pct_from_low
                     })
+            except (ValueError, KeyError):
+                continue
 
-        df = pd.DataFrame(records)
-        if df.empty:
-            return pd.DataFrame(), "بيانات فارغة"
+    df = pd.DataFrame(records)
+    if not df.empty:
+        df = df.sort_values(by="change", ascending=False)
+    return df
 
-        # ترتيب كل سوق بينانس تنازلياً حسب أعلى نسبة تغير خلال 24 ساعة
-        df_sorted = df.sort_values(by="change", ascending=False)
-        return df_sorted, "Binance Global API (جميع العملات)"
+
+def fetch_crypto_multi_source():
+    """جلب بيانات السوق مع مصادر احتياطية متعددة لتفادي حظر السيرفرات"""
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+    }
+
+    # المصدر 1: Binance Global
+    try:
+        url = "https://api.binance.com/api/v3/ticker/24hr"
+        resp = requests.get(url, headers=headers, timeout=10)
+        resp.raise_for_status()
+        df = parse_ticker_data(resp.json())
+        if not df.empty:
+            return df, "Binance Global API"
     except Exception as e:
         print(f"⚠️ Binance API error: {e}")
-        return pd.DataFrame(), "تعذر الاتصال"
+
+    # المصدر 2 الاحتياطي: MEXC Global (فائقة السرعة ولا تحظر السيرفرات السحابية)
+    try:
+        url = "https://api.mexc.com/api/v3/ticker/24hr"
+        resp = requests.get(url, headers=headers, timeout=10)
+        resp.raise_for_status()
+        df = parse_ticker_data(resp.json())
+        if not df.empty:
+            return df, "MEXC Global API (احتياطي)"
+    except Exception as e:
+        print(f"⚠️ MEXC API error: {e}")
+
+    # المصدر 3 الاحتياطي: CoinGecko API
+    try:
+        cg_url = "https://api.coingecko.com/api/v3/coins/markets"
+        params = {
+            "vs_currency": "usd",
+            "order": "price_change_percentage_24h_desc",
+            "per_page": 250,
+            "page": 1,
+            "sparkline": "false"
+        }
+        resp = requests.get(cg_url, params=params, headers=headers, timeout=12)
+        resp.raise_for_status()
+        cg_data = resp.json()
+
+        records = []
+        for coin in cg_data:
+            price = float(coin.get("current_price", 0.0) or 0.0)
+            high = float(coin.get("high_24h", 0.0) or 0.0)
+            low = float(coin.get("low_24h", 0.0) or 0.0)
+            pct_from_low = ((price - low) / low * 100) if low > 0 else 0.0
+
+            records.append({
+                "ticker": f"{coin['symbol'].upper()}USDT",
+                "price": price,
+                "change": float(coin.get("price_change_percentage_24h", 0.0) or 0.0),
+                "quoteVolume": float(coin.get("total_volume", 0.0) or 0.0),
+                "high_52": high,
+                "low_52": low,
+                "pct_from_low": pct_from_low
+            })
+
+        df_cg = pd.DataFrame(records).sort_values(by="change", ascending=False)
+        if not df_cg.empty:
+            return df_cg, "CoinGecko API (احتياطي)"
+    except Exception as e:
+        print(f"⚠️ CoinGecko API error: {e}")
+
+    return pd.DataFrame(), "تعذر الاتصال"
 
 
 def get_activity_status(change, volume_m):
@@ -338,25 +391,23 @@ def main():
     today, counts = load_seen()
     now_time = datetime.now(RIYADH).strftime("%H:%M:%S")
 
-    print(f"⏰ [{now_time}] جاري فحص السوق كاملاً والجلب المباشر من Binance Global...")
+    print(f"⏰ [{now_time}] جاري فحص جميع مصادر السوق والاتصال المباشر...")
 
-    df, source_name = fetch_all_crypto_from_binance()
+    df, source_name = fetch_crypto_multi_source()
     crypto_info = get_crypto_info_dict()
 
     if df.empty:
-        print("❌ تعذر جلب البيانات من المصادر.")
+        print("❌ تعذر جلب البيانات من كافة المصادر.")
         send("⚠️ تعذر جلب البيانات في الوقت الحالي.")
         return
 
     header = f"🚨 <b>تحديث سوق الكريبتو (أعلى العملات صعوداً)</b>\n📡 <b>المصدر:</b> <code>{source_name}</code>"
     blocks = []
 
-    # جلب أسرع 10 عملات صاعدة في منصة بينانس دون استبعاد أي عملة
     for idx, (_, row) in enumerate(df.head(MAX_SHOWN).iterrows(), 1):
         ticker = str(row["ticker"])
         clean_symbol = ticker.replace("USDT", "")
 
-        # البحث بالقاموس، وفي حال عدم التواجد تعرض العملة باسمها الافتراضي دون حجبها
         info = crypto_info.get(ticker, {})
         if isinstance(info, dict) and info:
             arabic_name = escape_html(info.get("name", clean_symbol))
@@ -401,7 +452,6 @@ def main():
         ]
         blocks.append("\n".join(lines))
 
-    # تقسيم التقرير إلى رسالتين لتفادي تجاور حد 4096 حرفاً في تيليجرام
     if blocks:
         half = len(blocks) // 2
         part1 = blocks[:half]
@@ -415,7 +465,7 @@ def main():
             msg2 = "📌 <b>تتمة التقرير:</b>\n\n" + "\n\n".join(part2)
             send(msg2)
 
-        print(f"✅ تم إرسال {len(blocks)} عملة مقسمة على رسالتين بنجاح.")
+        print(f"✅ تم إرسال {len(blocks)} عملة مقسمة بنجاح عبر المصدر ({source_name}).")
 
     save_seen(today, counts)
 
