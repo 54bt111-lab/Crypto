@@ -20,7 +20,7 @@ MAX_SHOWN = 10
 
 
 def get_crypto_info_dict():
-    """قاموس المعلومات الشاملة (الاسم، الدولة، ومشروع العملة)"""
+    """قاموس المعلومات الشاملة للعملات (الاسم، المقر، ومشروع العملة)"""
     return {
         "BTCUSDT": {
             "name": "بيتكوين", 
@@ -67,6 +67,26 @@ def get_crypto_info_dict():
             "country": "🇸🇬 سنغافورة", 
             "project": "العملة الأساسية لمنظومة Crypto.com وسلسلة Cronos اللامركزية."
         },
+        "STRKUSDT": {
+            "name": "ستارك نت", 
+            "country": "🌐 عالمي", 
+            "project": "حل طبقة ثانية (L2) لشبكة إيثريوم يعتمد تقنية STARK ZK-Rollups لخفض الرسوم."
+        },
+        "GRTUSDT": {
+            "name": "ذا جراف", 
+            "country": "🇺🇸 الولايات المتحدة", 
+            "project": "بروتوكول أرشفة واستعلام عن بيانات البلوكشين (Indexing Protocol)."
+        },
+        "POLUSDT": {
+            "name": "بوليكون (POL)", 
+            "country": "🇮🇳 الهند / عالمي", 
+            "project": "العملة المحدثة لشبكة Polygon لتأمين وتوسيع شبكات الطبقة الثانية."
+        },
+        "VETUSDT": {
+            "name": "في تشين", 
+            "country": "🇸🇬 سنغافورة", 
+            "project": "منصة بلوكشين متخصصة في إدارة سلاسل الإمداد وتتبع المنتجات."
+        },
         "ADAUSDT": {
             "name": "كاردانو", 
             "country": "🇨🇭 سويسرا / 🇯🇵 اليابان", 
@@ -85,7 +105,7 @@ def get_crypto_info_dict():
         "DOTUSDT": {
             "name": "بولكادوت", 
             "country": "🇨🇭 سويسرا", 
-            "project": "بروتوكول يربط عدة شبكات بلوكشين ببعضها لتسهيل نقل البيانات والأصول (Interoperability)."
+            "project": "بروتوكول يربط عدة شبكات بلوكشين ببعضها لتسهيل نقل البيانات والأصول."
         },
         "LINKUSDT": {
             "name": "شينلينك", 
@@ -195,80 +215,52 @@ def get_crypto_info_dict():
     }
 
 
-def fetch_crypto_from_coingecko():
-    """جلب بيانات حركة العملات والنطاق السعري"""
+def fetch_all_crypto_from_binance():
+    """جلب جميع أزواج USDT من بينانس العالمية بطلب واحد بدون حد أقصى للحجم ورصد الأعلى صعوداً"""
     headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
     }
-    
-    # 1. CoinGecko API
+    url = "https://api.binance.com/api/v3/ticker/24hr"
+
     try:
-        cg_url = "https://api.coingecko.com/api/v3/coins/markets"
-        params = {
-            "vs_currency": "usd",
-            "order": "price_change_percentage_24h_desc",
-            "per_page": 100,
-            "page": 1,
-            "sparkline": "false"
-        }
-        resp = requests.get(cg_url, params=params, headers=headers, timeout=12)
-        resp.raise_for_status()
-        cg_data = resp.json()
-
-        records = []
-        for coin in cg_data:
-            price = float(coin.get("current_price", 0.0) or 0.0)
-            high_52 = float(coin.get("high_24h", 0.0) or 0.0) * 1.8
-            low_52 = float(coin.get("low_24h", 0.0) or 0.0) * 0.5
-            
-            pct_from_low = ((price - low_52) / low_52 * 100) if low_52 > 0 else 0.0
-
-            records.append({
-                "ticker": f"{coin['symbol'].upper()}USDT",
-                "price": price,
-                "change": float(coin.get("price_change_percentage_24h", 0.0) or 0.0),
-                "quoteVolume": float(coin.get("total_volume", 0.0) or 0.0),
-                "high_52": high_52,
-                "low_52": low_52,
-                "pct_from_low": pct_from_low
-            })
-
-        df_cg = pd.DataFrame(records)
-        df_sorted = df_cg.sort_values(by="change", ascending=False)
-        return df_sorted, "CoinGecko Market API"
-    except Exception as e:
-        print(f"⚠️ CoinGecko API error: {e}")
-
-    # 2. الاحتياطي عبر Binance US API
-    try:
-        url = "https://api.binance.us/api/v3/ticker/24hr"
-        response = requests.get(url, headers=headers, timeout=10)
+        response = requests.get(url, headers=headers, timeout=15)
         response.raise_for_status()
         data = response.json()
 
         records = []
         for item in data:
-            if item["symbol"].endswith("USDT"):
+            symbol = item["symbol"]
+
+            # فلترة أزواج USDT فقط واستبعاد العملات ذات الرافعة المالية (UP, DOWN, BULL, BEAR)
+            if symbol.endswith("USDT") and not any(x in symbol for x in ["UPUSDT", "DOWNUSDT", "BULLUSDT", "BEARUSDT"]):
                 price = float(item["lastPrice"])
+                change = float(item["priceChangePercent"])
+                volume = float(item["quoteVolume"])
                 high = float(item["highPrice"])
                 low = float(item["lowPrice"])
-                records.append({
-                    "ticker": item["symbol"],
-                    "price": price,
-                    "change": float(item["priceChangePercent"]),
-                    "quoteVolume": float(item["quoteVolume"]),
-                    "high_52": high * 1.5,
-                    "low_52": low * 0.7,
-                    "pct_from_low": ((price - (low * 0.7)) / (low * 0.7) * 100) if low > 0 else 0.0
-                })
 
-        df_b = pd.DataFrame(records)
-        df_sorted = df_b.sort_values(by="change", ascending=False)
-        return df_sorted, "Binance US API"
+                if price > 0:
+                    pct_from_low = ((price - low) / low * 100) if low > 0 else 0.0
+                    records.append({
+                        "ticker": symbol,
+                        "price": price,
+                        "change": change,
+                        "quoteVolume": volume,
+                        "high_52": high,
+                        "low_52": low,
+                        "pct_from_low": pct_from_low
+                    })
+
+        df = pd.DataFrame(records)
+        if df.empty:
+            return pd.DataFrame(), "بيانات فارغة"
+
+        # ترتيب كل سوق بينانس تنازلياً حسب أعلى نسبة تغير خلال 24 ساعة
+        df_sorted = df.sort_values(by="change", ascending=False)
+        return df_sorted, "Binance Global API (جميع العملات)"
     except Exception as e:
-        print(f"⚠️ Binance US API error: {e}")
-
-    return pd.DataFrame(), "تعذر الاتصال"
+        print(f"⚠️ Binance API error: {e}")
+        return pd.DataFrame(), "تعذر الاتصال"
 
 
 def get_activity_status(change, volume_m):
@@ -346,9 +338,9 @@ def main():
     today, counts = load_seen()
     now_time = datetime.now(RIYADH).strftime("%H:%M:%S")
 
-    print(f"⏰ [{now_time}] جاري إجراء الفحص والتحديث الشامل...")
+    print(f"⏰ [{now_time}] جاري فحص السوق كاملاً والجلب المباشر من Binance Global...")
 
-    df, source_name = fetch_crypto_from_coingecko()
+    df, source_name = fetch_all_crypto_from_binance()
     crypto_info = get_crypto_info_dict()
 
     if df.empty:
@@ -356,17 +348,15 @@ def main():
         send("⚠️ تعذر جلب البيانات في الوقت الحالي.")
         return
 
-    # ترتيب العملات تنازلياً حسب أعلى نسبة ارتفاع
-    df_sorted = df.sort_values(by="change", ascending=False)
-
-    header = f"🚨 <b>تحديث سوق الكريبتو (أعلى العملات حركة)</b>\n📡 <b>المصدر:</b> <code>{source_name}</code>"
+    header = f"🚨 <b>تحديث سوق الكريبتو (أعلى العملات صعوداً)</b>\n📡 <b>المصدر:</b> <code>{source_name}</code>"
     blocks = []
 
-    # جلب أسرع 10 عملات صعوداً مباشرة من السوق دون حجب العملات غير المدرجة بالقاموس
-    for idx, (_, row) in enumerate(df_sorted.head(MAX_SHOWN).iterrows(), 1):
+    # جلب أسرع 10 عملات صاعدة في منصة بينانس دون استبعاد أي عملة
+    for idx, (_, row) in enumerate(df.head(MAX_SHOWN).iterrows(), 1):
         ticker = str(row["ticker"])
         clean_symbol = ticker.replace("USDT", "")
-        
+
+        # البحث بالقاموس، وفي حال عدم التواجد تعرض العملة باسمها الافتراضي دون حجبها
         info = crypto_info.get(ticker, {})
         if isinstance(info, dict) and info:
             arabic_name = escape_html(info.get("name", clean_symbol))
@@ -382,7 +372,7 @@ def main():
         price = float(row["price"])
         change = float(row["change"])
         usdt_volume = float(row["quoteVolume"]) / 1_000_000
-        
+
         high_52 = float(row.get("high_52", 0.0))
         low_52 = float(row.get("low_52", 0.0))
         pct_from_low = float(row.get("pct_from_low", 0.0))
@@ -401,7 +391,7 @@ def main():
             f"⚡ <b>نشاط العملة:</b> {activity}",
             f"🚨 🛑 <b>[تنبيه رقم {curr_count}]</b>",
             f"💵 <b>السعر:</b> ${price:.4f} | <b>التغير 24h:</b> {change:+.2f}%",
-            f"📊 <b>قمة 52w:</b> ${high_52:.4f} | <b>قاع 52w:</b> ${low_52:.4f}",
+            f"📊 <b>القمة:</b> ${high_52:.4f} | <b>القاع:</b> ${low_52:.4f}",
             f"📈 <b>الارتفاع عن القاع:</b> +{pct_from_low:.1f}%",
             f"💰 <b>السيولة المالية:</b> ${usdt_volume:.2f}M USDT",
             f"🔗 <b>الشارت:</b> <a href='{tv_url}'>فتح في TradingView</a>",
@@ -411,7 +401,7 @@ def main():
         ]
         blocks.append("\n".join(lines))
 
-    # تقسيم الرسائل لتفادي تجاور 4096 حرفاً في تيليجرام
+    # تقسيم التقرير إلى رسالتين لتفادي تجاور حد 4096 حرفاً في تيليجرام
     if blocks:
         half = len(blocks) // 2
         part1 = blocks[:half]
