@@ -47,6 +47,26 @@ def get_crypto_info_dict():
             "country": "🇺🇸 الولايات المتحدة", 
             "project": "شبكة تسوية ومدفوعات سريعة ومخفضة التكلفة للمؤسسات المالية والبنوك."
         },
+        "HBARUSDT": {
+            "name": "هيديرا", 
+            "country": "🇺🇸 الولايات المتحدة", 
+            "project": "شبكة distributed ledger تعتمد تقنية Hashgraph لتوفير سرعة فائقة ورسوم منخفضة."
+        },
+        "ALGOUSDT": {
+            "name": "ألغوراند", 
+            "country": "🇺🇸 الولايات المتحدة", 
+            "project": "منصة بلوكشين تعتمد إثبات الحصة الخالص لتوفير أمان وسرعة معاملات عالية."
+        },
+        "XLMUSDT": {
+            "name": "ستيلار", 
+            "country": "🇺🇸 الولايات المتحدة", 
+            "project": "شبكة مدفوعات مفتوحة المصدر لتسهيل نقل الأموال والعملات عبر الحدود."
+        },
+        "CROUSDT": {
+            "name": "كرونوس", 
+            "country": "🇸🇬 سنغافورة", 
+            "project": "العملة الأساسية لمنظومة Crypto.com وسلسلة Cronos اللامركزية."
+        },
         "ADAUSDT": {
             "name": "كاردانو", 
             "country": "🇨🇭 سويسرا / 🇯🇵 اليابان", 
@@ -214,7 +234,8 @@ def fetch_crypto_from_coingecko():
             })
 
         df_cg = pd.DataFrame(records)
-        return df_cg, "CoinGecko Market API"
+        df_sorted = df_cg.sort_values(by="change", ascending=False)
+        return df_sorted, "CoinGecko Market API"
     except Exception as e:
         print(f"⚠️ CoinGecko API error: {e}")
 
@@ -335,25 +356,24 @@ def main():
         send("⚠️ تعذر جلب البيانات في الوقت الحالي.")
         return
 
-    # التصفية بحسب القاموس المعتمد
-    filtered_df = df[df["ticker"].isin(crypto_info.keys())]
-
-    if filtered_df.empty or len(filtered_df) < 3:
-        filtered_df = df.head(MAX_SHOWN)
+    # ترتيب العملات تنازلياً حسب أعلى نسبة ارتفاع
+    df_sorted = df.sort_values(by="change", ascending=False)
 
     header = f"🚨 <b>تحديث سوق الكريبتو (أعلى العملات حركة)</b>\n📡 <b>المصدر:</b> <code>{source_name}</code>"
     blocks = []
 
-    for idx, (_, row) in enumerate(filtered_df.head(MAX_SHOWN).iterrows(), 1):
+    # جلب أسرع 10 عملات صعوداً مباشرة من السوق دون حجب العملات غير المدرجة بالقاموس
+    for idx, (_, row) in enumerate(df_sorted.head(MAX_SHOWN).iterrows(), 1):
         ticker = str(row["ticker"])
+        clean_symbol = ticker.replace("USDT", "")
         
         info = crypto_info.get(ticker, {})
-        if isinstance(info, dict):
-            arabic_name = escape_html(info.get("name", ticker))
+        if isinstance(info, dict) and info:
+            arabic_name = escape_html(info.get("name", clean_symbol))
             country = escape_html(info.get("country", "🌐 غير محدد"))
             project_desc = escape_html(info.get("project", "مشروع عملة رقمية مشفرة."))
         else:
-            arabic_name = escape_html(info if info else ticker)
+            arabic_name = escape_html(clean_symbol)
             country = "🌐 غير محدد"
             project_desc = "مشروع عملة رقمية مشفرة."
 
@@ -391,7 +411,7 @@ def main():
         ]
         blocks.append("\n".join(lines))
 
-    # تقسيم الرسائل (5 عملات في كل رسالة) لتفادي تجاور 4096 حرفاً في تيليجرام
+    # تقسيم الرسائل لتفادي تجاور 4096 حرفاً في تيليجرام
     if blocks:
         half = len(blocks) // 2
         part1 = blocks[:half]
