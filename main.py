@@ -12,19 +12,42 @@ TOKEN = os.environ.get("BOT_TOKEN", "")
 CHAT_ID = os.environ.get("CHAT_ID", "")
 
 RIYADH = ZoneInfo("Asia/Riyadh")
+SEEN_FILE = "seen_stocks.json"
 MAX_SHOWN = 10
-CHECK_INTERVAL_SECONDS = 120  # التكرار كل دقيقتين (120 ثانية)
+CHECK_INTERVAL_SECONDS = 120  # التكرار كل دقيقتين
+
+# ================================
+# إدارة ملف التكرارات والتحقق اليومي
+# ================================
+def load_seen():
+    """تحميل سجل التنبيهات لليوم الحالي"""
+    today = datetime.now(RIYADH).strftime("%Y-%m-%d")
+    try:
+        if os.path.exists(SEEN_FILE):
+            with open(SEEN_FILE, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            if data.get("date") == today:
+                return today, data.get("counts", {})
+    except Exception as e:
+        print(f"⚠️ خطأ في قراءة ملف السجل: {e}")
+    return today, {}
+
+def save_seen(today, counts):
+    """حفظ سجل التنبيهات مع التوقيت"""
+    try:
+        with open(SEEN_FILE, "w", encoding="utf-8") as f:
+            json.dump({
+                "date": today,
+                "counts": counts,
+                "last_update": datetime.now(RIYADH).strftime("%H:%M:%S")
+            }, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        print(f"❌ خطأ في حفظ ملف السجل: {e}")
 
 # ================================
 # تحديد نوع الجلسة بناءً على توقيت السعودية (صيفي UTC+3)
 # ================================
 def get_current_session():
-    """
-    تحديد الجلسة الحالية بالتوقيت الصيفي (توقيت السعودية):
-    - Pre-Market:  11:00 - 16:30
-    - Main Market: 16:30 - 23:00
-    - Post-Market: 23:00 - 03:00 (الفجر)
-    """
     now = datetime.now(RIYADH)
     time_num = now.hour * 100 + now.minute
 
@@ -47,7 +70,6 @@ def fetch_filtered_stocks(session_type):
         "Content-Type": "application/json"
     }
 
-    # تحديد متغير نسبة التغير والحجم حسب الجلسة
     change_field = "change"
     volume_field = "volume"
     
@@ -58,14 +80,6 @@ def fetch_filtered_stocks(session_type):
         change_field = "postmarket_change"
         volume_field = "postmarket_volume"
 
-    # الشروط الـ 7 المطلوبة:
-    # 1. Float under 50M
-    # 2. Current Volume over 30K
-    # 3. Change Up >= 2%
-    # 4. Performance 5minutes > 0%
-    # 5. Average Volume (10d) over 100K
-    # 6. Relative Volume over 1.5
-    # 7. Price under $50
     payload = {
         "filter": [
             {"left": "float_shares_outstanding_current", "operation": "less", "right": 50_000_000},
@@ -88,10 +102,6 @@ def fetch_filtered_stocks(session_type):
             "sector",                           # القطاع
             "industry",                         # الصناعة
             "country",                          # الدولة
-            "float_shares_outstanding_current", # أسهم الـ Float
-            "average_volume_10d_calc",          # متوسط الحجم
-            "relative_volume_10d_calc",         # الحجم النسبي RVOL
-            "Change.5m",                        # تغير آخر 5 دقائق
             "exchange"                          # البورصة
         ],
         "sort": {"sortBy": change_field, "sortOrder": "desc"},
@@ -101,14 +111,13 @@ def fetch_filtered_stocks(session_type):
     try:
         response = requests.post(url, json=payload, headers=headers, timeout=12)
         response.raise_for_status()
-        data = response.json()
-        return data.get("data", [])
+        return response.json().get("data", [])
     except Exception as e:
-        print(f"❌ خطأ أثناء جلب البيانات من TradingView: {e}")
+        print(f"❌ خطأ أثناء جلب البيانات: {e}")
         return []
 
 # ================================
-# أدوات المساعدة والدعم
+# أدوات المساعدة
 # ================================
 def escape_html(text):
     if not text:
@@ -144,80 +153,85 @@ def send_telegram(text):
         print(f"❌ خطأ في إرسال التليجرام: {e}")
 
 # ================================
-# الحلقة التكرارية الرئيسية (Auto-Loop)
+# التشغيل الرئيسي
 # ================================
 def main():
-    print("🚀 تم تشغيل ماسح الأسهم الأمريكية التلقائي (التكرار كل دقيقتين)...")
-    
+    print("🚀 تم تشغيل ماسح الأسهم (مع عداد التكرارات)...")
+
     while True:
         try:
+            today, counts = load_seen()
             now_str = datetime.now(RIYADH).strftime("%H:%M:%S")
             session_key, session_name = get_current_session()
 
-            # في حال كان السوق مغلقاً (من 3:00 فجراً حتى 11:00 صباحاً)
             if session_key == "closed":
-                print(f"⏸️ [{now_str}] السوق مغلق حالياً. جاري الانتظار 5 دقائق للتحقق مجدداً...")
+                print(f"⏸️ [{now_str}] السوق مغلق حالياً. ينتظر 5 دقائق...")
                 time.sleep(300)
                 continue
 
-            print(f"⏰ [{now_str}] جاري الفحص الدوري | الجلسة: {session_name}")
+            print(f"⏰ [{now_str}] جاري الفحص | الجلسة: {session_name}")
             stocks = fetch_filtered_stocks(session_key)
 
             if stocks:
                 header = (
                     f"🇺🇸 <b>رادار الأسهم الأمريكية</b>\n"
-                    f"⏱️ <b>الجلسة الحالية:</b> {session_name}\n"
+                    f"⏱️ <b>الجلسة:</b> {session_name}\n"
                     f"📅 <b>الوقت:</b> <code>{now_str} KSA</code>\n"
                     f"-----------------------------------"
                 )
                 
                 blocks = []
-                for idx, item in enumerate(stocks, 1):
+                for item in stocks:
                     d = item.get("d", [])
-                    if len(d) < 13:
+                    if len(d) < 9:
                         continue
 
                     symbol = escape_html(d[0])
-                    company_name = escape_html(d[1])
                     price = float(d[2] or 0)
                     change_pct = float(d[3] or 0)
                     volume = float(d[4] or 0)
                     sector = escape_html(d[5])
                     industry = escape_html(d[6])
                     country = escape_html(d[7])
-                    float_shares = float(d[8] or 0)
-                    avg_vol = float(d[9] or 0)
-                    rvol = float(d[10] or 0)
-                    change_5m = float(d[11] or 0)
-                    exchange = escape_html(d[12])
+                    exchange = escape_html(d[8])
+
+                    # زياوة عداد التكرار للسهم
+                    curr_count = counts.get(symbol, 0) + 1
+                    counts[symbol] = curr_count
+
+                    # صياغة عنوان التنبيه (Alert أو Alert 2 أو Alert 3 ...)
+                    alert_title = "🚨 Alert" if curr_count == 1 else f"🚨 Alert {curr_count}"
 
                     tv_url = f"https://www.tradingview.com/chart/?symbol={exchange}:{symbol}"
 
+                    # المخرجات بالشكل والمراحل المطلوبة تماماً
                     lines = [
-                        f"🔥 <b>#{idx} {symbol}</b> - {company_name}",
-                        f"🏛️ <b>البورصة:</b> {exchange} | 🌐 <b>الدولة:</b> {country}",
-                        f"🏢 <b>القطاع:</b> {sector}",
-                        f"🏭 <b>الصناعة:</b> {industry}",
-                        f"💵 <b>السعر:</b> ${price:.2f} | <b>التغير للجلسة:</b> +{change_pct:.2f}%",
-                        f"⚡ <b>أداء 5 دقائق:</b> +{change_5m:.2f}%",
-                        f"📊 <b>الحجم الحالي:</b> {format_number(volume)}",
-                        f"📈 <b>الحجم النسبي (RVOL):</b> {rvol:.2f}x | <b>المتوسط:</b> {format_number(avg_vol)}",
-                        f"🏊 <b>الأسهم الحرة (Float):</b> {format_number(float_shares)}",
-                        f"🔗 <b>الشارت:</b> <a href='{tv_url}'>فتح الشارت في TradingView</a>",
+                        f"{alert_title}",
+                        f"<b>رمز السهم:</b> {symbol}",
+                        f"<b>القطاع:</b> {sector}",
+                        f"<b>الصناعة:</b> {industry}",
+                        f"<b>الدوله:</b> {country}",
+                        f"<b>السعر الحالي:</b> ${price:.2f}",
+                        f"<b>التغير للجلسة الحالية +-٪:</b> {change_pct:+.2f}%",
+                        f"<b>Vol:</b> {format_number(volume)}",
+                        f"<b>الشارت TradingView:</b> <a href='{tv_url}'>فتح الشارت</a>",
                         "-----------------------------------"
                     ]
                     blocks.append("\n".join(lines))
 
+                # حفظ حالة التكرارات
+                save_seen(today, counts)
+
+                # إرسال الرسالة
                 full_message = header + "\n\n" + "\n\n".join(blocks)
                 send_telegram(full_message)
-                print(f"✅ تم إرسال التقرير ({len(blocks)} سهم مطابق) بنجاح.")
+                print(f"✅ تم إرسال التقرير ({len(blocks)} سهم) وتحديث السجل.")
             else:
-                print(f"ℹ️ [{now_str}] لم يتم العثور على أسهم تطابق الشروط في هذا الفحص.")
+                print(f"ℹ️ [{now_str}] لا توجد أسهم تطابق الشروط حالياً.")
 
         except Exception as e:
             print(f"❌ حدث خطأ أثناء التشغيل: {e}")
 
-        # الانتظار لمدة دقيقتين قبل الفحص القادم
         time.sleep(CHECK_INTERVAL_SECONDS)
 
 if __name__ == "__main__":
