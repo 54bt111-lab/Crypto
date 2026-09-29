@@ -2,8 +2,8 @@ name: Crypto Screener Bot
 
 on:
   schedule:
-    # تشغيل تلقائي كل 5 دقائق
-    - cron: '*/5 * * * *'
+    # تشغيل الجوب كل 12 دقيقة (حيث يتكفل الـ Loop الداخلي بالفحص كل 3 دقائق)
+    - cron: '*/12 * * * *'
   workflow_dispatch:
 
 jobs:
@@ -25,9 +25,17 @@ jobs:
           pip install setuptools wheel pandas requests tradingview-screener
           pip install --no-cache-dir git+https://github.com/rongardF/tvdatafeed.git
 
-      - name: تشغيل سكريبت الفحص وتمرير متغيرات التلغرام
+      - name: تشغيل سكريبت الفحص بتكرار كل 3 دقائق
         env:
           BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
           CHAT_ID: ${{ secrets.CHAT_ID }}
         run: |
-          python main.py
+          # حلقة تكرار تعمل 4 مرات، بانتظار 180 ثانية (3 دقائق) بين كل فحص
+          for i in {1..4}; do
+            echo "⏰ بدء الفحص رقم $i..."
+            python main.py
+            if [ $i -lt 4 ]; then
+              echo "💤 الانتظار 3 دقائق قبل الفحص التالي..."
+              sleep 180
+            fi
+          done
