@@ -66,13 +66,17 @@ def fetch_filtered_stocks(session_type):
         "Content-Type": "application/json"
     }
 
+    # تحديد أسماء الحقول بحسب الجلسة الحالية لضمان جلب السعر المباشر الصحيح
+    price_field = "close"
     change_field = "change"
     volume_field = "volume"
     
     if session_type == "premarket":
+        price_field = "premarket_close"
         change_field = "premarket_change"
         volume_field = "premarket_volume"
     elif session_type == "postmarket":
+        price_field = "postmarket_close"
         change_field = "postmarket_change"
         volume_field = "postmarket_volume"
 
@@ -86,7 +90,7 @@ def fetch_filtered_stocks(session_type):
         {"left": "exchange", "operation": "in_range", "right": ["NYSE", "NASDAQ", "AMEX"]}
     ]
 
-    # إضافة فلاتر خاصة بالسوق الرئيسي فقط لمنع حجب النتائج في الما قبل/بعد التداول
+    # فلاتر خاصة بالسوق الرئيسي فقط
     if session_type == "market":
         filters.append({"left": "Change.5m", "operation": "greater", "right": 0.0})
         filters.append({"left": "relative_volume_10d_calc", "operation": "greater", "right": 1.5})
@@ -96,8 +100,16 @@ def fetch_filtered_stocks(session_type):
         "options": {"lang": "en"},
         "symbols": {"query": {"types": []}, "tickers": []},
         "columns": [
-            "name", "description", "close", change_field, volume_field,
-            "sector", "industry", "country", "exchange"
+            "name",          # Index 0
+            "description",   # Index 1
+            price_field,     # Index 2: السعر المباشر للجلسة (premarket_close / postmarket_close / close)
+            change_field,    # Index 3
+            volume_field,    # Index 4
+            "sector",        # Index 5
+            "industry",      # Index 6
+            "country",       # Index 7
+            "exchange",      # Index 8
+            "close"          # Index 9: سعر إغلاق السوق الرئيسي للتحوط
         ],
         "sort": {"sortBy": change_field, "sortOrder": "desc"},
         "range": [0, MAX_SHOWN]
@@ -158,7 +170,7 @@ def send_in_chunks(header, blocks):
     current_message = header + "\n\n"
     
     for block in blocks:
-        if len(current_message) + len(block) + 2 > 3900:  # حد أمان
+        if len(current_message) + len(block) + 2 > 3900:
             send_telegram(current_message)
             current_message = block + "\n\n"
         else:
@@ -197,7 +209,10 @@ def main():
                 continue
 
             symbol = escape_html(d[0])
-            price = float(d[2] or 0)
+            # جلب سعر الجلسة الحالية، وإن لم يتوفر يُستخدم سعر الإغلاق d[9]
+            price_val = d[2] if d[2] is not None else d[9]
+            price = float(price_val or 0)
+            
             change_pct = float(d[3] or 0)
             volume = float(d[4] or 0)
             sector = escape_html(d[5])
