@@ -1,6 +1,5 @@
 import os
 import json
-import time
 import requests
 from datetime import datetime
 from zoneinfo import ZoneInfo
@@ -14,13 +13,11 @@ CHAT_ID = os.environ.get("CHAT_ID", "")
 RIYADH = ZoneInfo("Asia/Riyadh")
 SEEN_FILE = "seen_stocks.json"
 MAX_SHOWN = 10
-CHECK_INTERVAL_SECONDS = 120  # التكرار كل دقيقتين
 
 # ================================
 # إدارة ملف التكرارات والتحقق اليومي
 # ================================
 def load_seen():
-    """تحميل سجل التنبيهات لليوم الحالي"""
     today = datetime.now(RIYADH).strftime("%Y-%m-%d")
     try:
         if os.path.exists(SEEN_FILE):
@@ -33,7 +30,6 @@ def load_seen():
     return today, {}
 
 def save_seen(today, counts):
-    """حفظ سجل التنبيهات مع التوقيت"""
     try:
         with open(SEEN_FILE, "w", encoding="utf-8") as f:
             json.dump({
@@ -45,7 +41,7 @@ def save_seen(today, counts):
         print(f"❌ خطأ في حفظ ملف السجل: {e}")
 
 # ================================
-# تحديد نوع الجلسة بناءً على توقيت السعودية (صيفي UTC+3)
+# تحديد نوع الجلسة
 # ================================
 def get_current_session():
     now = datetime.now(RIYADH)
@@ -61,7 +57,7 @@ def get_current_session():
         return "closed", "⏸️ المغلق (خارج أوقات التداول)"
 
 # ================================
-# جلب بيانات الأسهم وبناء الفلاتر (TradingView API)
+# جلب بيانات الأسهم (TradingView API)
 # ================================
 def fetch_filtered_stocks(session_type):
     url = "https://scanner.tradingview.com/america/scan"
@@ -94,15 +90,8 @@ def fetch_filtered_stocks(session_type):
         "options": {"lang": "en"},
         "symbols": {"query": {"types": []}, "tickers": []},
         "columns": [
-            "name",                             # رمز السهم
-            "description",                      # اسم الشركة
-            "close",                            # السعر الحالي
-            change_field,                        # التغير % الخاص بالجلسة
-            volume_field,                        # حجم تداول الجلسة
-            "sector",                           # القطاع
-            "industry",                         # الصناعة
-            "country",                          # الدولة
-            "exchange"                          # البورصة
+            "name", "description", "close", change_field, volume_field,
+            "sector", "industry", "country", "exchange"
         ],
         "sort": {"sortBy": change_field, "sortOrder": "desc"},
         "range": [0, MAX_SHOWN]
@@ -153,86 +142,69 @@ def send_telegram(text):
         print(f"❌ خطأ في إرسال التليجرام: {e}")
 
 # ================================
-# التشغيل الرئيسي
+# التنفيذ لمرة واحدة (Single Run)
 # ================================
 def main():
-    print("🚀 تم تشغيل ماسح الأسهم (مع عداد التكرارات)...")
+    today, counts = load_seen()
+    now_str = datetime.now(RIYADH).strftime("%H:%M:%S")
+    session_key, session_name = get_current_session()
 
-    while True:
-        try:
-            today, counts = load_seen()
-            now_str = datetime.now(RIYADH).strftime("%H:%M:%S")
-            session_key, session_name = get_current_session()
+    if session_key == "closed":
+        print(f"⏸️ [{now_str}] السوق مغلق حالياً.")
+        return
 
-            if session_key == "closed":
-                print(f"⏸️ [{now_str}] السوق مغلق حالياً. ينتظر 5 دقائق...")
-                time.sleep(300)
+    print(f"⏰ [{now_str}] جاري الفحص | الجلسة: {session_name}")
+    stocks = fetch_filtered_stocks(session_key)
+
+    if stocks:
+        header = (
+            f"🇺🇸 <b>رادار الأسهم الأمريكية</b>\n"
+            f"⏱️ <b>الجلسة:</b> {session_name}\n"
+            f"📅 <b>الوقت:</b> <code>{now_str} KSA</code>\n"
+            f"-----------------------------------"
+        )
+        
+        blocks = []
+        for item in stocks:
+            d = item.get("d", [])
+            if len(d) < 9:
                 continue
 
-            print(f"⏰ [{now_str}] جاري الفحص | الجلسة: {session_name}")
-            stocks = fetch_filtered_stocks(session_key)
+            symbol = escape_html(d[0])
+            price = float(d[2] or 0)
+            change_pct = float(d[3] or 0)
+            volume = float(d[4] or 0)
+            sector = escape_html(d[5])
+            industry = escape_html(d[6])
+            country = escape_html(d[7])
+            exchange = escape_html(d[8])
 
-            if stocks:
-                header = (
-                    f"🇺🇸 <b>رادار الأسهم الأمريكية</b>\n"
-                    f"⏱️ <b>الجلسة:</b> {session_name}\n"
-                    f"📅 <b>الوقت:</b> <code>{now_str} KSA</code>\n"
-                    f"-----------------------------------"
-                )
-                
-                blocks = []
-                for item in stocks:
-                    d = item.get("d", [])
-                    if len(d) < 9:
-                        continue
+            curr_count = counts.get(symbol, 0) + 1
+            counts[symbol] = curr_count
 
-                    symbol = escape_html(d[0])
-                    price = float(d[2] or 0)
-                    change_pct = float(d[3] or 0)
-                    volume = float(d[4] or 0)
-                    sector = escape_html(d[5])
-                    industry = escape_html(d[6])
-                    country = escape_html(d[7])
-                    exchange = escape_html(d[8])
+            alert_title = "🚨 Alert" if curr_count == 1 else f"🚨 Alert {curr_count}"
+            tv_url = f"https://www.tradingview.com/chart/?symbol={exchange}:{symbol}"
 
-                    # زياوة عداد التكرار للسهم
-                    curr_count = counts.get(symbol, 0) + 1
-                    counts[symbol] = curr_count
+            lines = [
+                f"{alert_title}",
+                f"<b>رمز السهم:</b> {symbol}",
+                f"<b>القطاع:</b> {sector}",
+                f"<b>الصناعة:</b> {industry}",
+                f"<b>الدوله:</b> {country}",
+                f"<b>السعر الحالي:</b> ${price:.2f}",
+                f"<b>التغير للجلسة الحالية +-٪:</b> {change_pct:+.2f}%",
+                f"<b>Vol:</b> {format_number(volume)}",
+                f"<b>الشارت TradingView:</b> <a href='{tv_url}'>فتح الشارت</a>",
+                "-----------------------------------"
+            ]
+            blocks.append("\n".join(lines))
 
-                    # صياغة عنوان التنبيه (Alert أو Alert 2 أو Alert 3 ...)
-                    alert_title = "🚨 Alert" if curr_count == 1 else f"🚨 Alert {curr_count}"
-
-                    tv_url = f"https://www.tradingview.com/chart/?symbol={exchange}:{symbol}"
-
-                    # المخرجات بالشكل والمراحل المطلوبة تماماً
-                    lines = [
-                        f"{alert_title}",
-                        f"<b>رمز السهم:</b> {symbol}",
-                        f"<b>القطاع:</b> {sector}",
-                        f"<b>الصناعة:</b> {industry}",
-                        f"<b>الدوله:</b> {country}",
-                        f"<b>السعر الحالي:</b> ${price:.2f}",
-                        f"<b>التغير للجلسة الحالية +-٪:</b> {change_pct:+.2f}%",
-                        f"<b>Vol:</b> {format_number(volume)}",
-                        f"<b>الشارت TradingView:</b> <a href='{tv_url}'>فتح الشارت</a>",
-                        "-----------------------------------"
-                    ]
-                    blocks.append("\n".join(lines))
-
-                # حفظ حالة التكرارات
-                save_seen(today, counts)
-
-                # إرسال الرسالة
-                full_message = header + "\n\n" + "\n\n".join(blocks)
-                send_telegram(full_message)
-                print(f"✅ تم إرسال التقرير ({len(blocks)} سهم) وتحديث السجل.")
-            else:
-                print(f"ℹ️ [{now_str}] لا توجد أسهم تطابق الشروط حالياً.")
-
-        except Exception as e:
-            print(f"❌ حدث خطأ أثناء التشغيل: {e}")
-
-        time.sleep(CHECK_INTERVAL_SECONDS)
+        save_seen(today, counts)
+        full_message = header + "\n\n" + "\n\n".join(blocks)
+        send_telegram(full_message)
+        print(f"✅ تم إرسال {len(blocks)} سهم بنجاح.")
+    else:
+        print(f"ℹ️ [{now_str}] لا توجد أسهم تطابق الشروط حالياً.")
 
 if __name__ == "__main__":
     main()
