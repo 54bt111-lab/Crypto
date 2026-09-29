@@ -70,21 +70,24 @@ def fetch_filtered_stocks(session_type):
     price_field = "close"
     change_field = "change"
     volume_field = "volume"
+    filter_change_field = "change"
     
     if session_type == "premarket":
         price_field = "premarket_close"
         change_field = "premarket_change"
         volume_field = "premarket_volume"
+        filter_change_field = "premarket_change"
     elif session_type == "postmarket":
         price_field = "postmarket_close"
         change_field = "postmarket_change"
         volume_field = "postmarket_volume"
+        filter_change_field = "change"  # التعديل: الفلترة بحقل التغير الشامل لعدم تصفير النتائج في الـ Post-Market
 
     # الفلاتر الأساسية لجميع الجلسات
     filters = [
         {"left": "float_shares_outstanding_current", "operation": "less", "right": 50_000_000},
         {"left": volume_field, "operation": "greater", "right": 15_000},  # تم تعديل شرط الحجم ليكون أكبر من 15,000
-        {"left": change_field, "operation": "greater", "right": 2.0},
+        {"left": filter_change_field, "operation": "greater", "right": 2.0},
         {"left": "average_volume_10d_calc", "operation": "greater", "right": 100_000},
         {"left": "close", "operation": "less", "right": 50.0},
         {"left": "exchange", "operation": "in_range", "right": ["NYSE", "NASDAQ", "AMEX"]}
@@ -101,9 +104,9 @@ def fetch_filtered_stocks(session_type):
         "columns": [
             "name",          # Index 0
             "description",   # Index 1
-            price_field,     # Index 2: السعر المباشر للجلسة الحالية
-            change_field,    # Index 3: نسبة التغير للجلسة الحالية
-            volume_field,    # Index 4: الحجم للجلسة الحالية
+            price_field,     # Index 2: السعر المباشر للجلسة الحالية (postmarket_close)
+            change_field,    # Index 3: نسبة التغير للجلسة الحالية (postmarket_change)
+            volume_field,    # Index 4: الحجم للجلسة الحالية (postmarket_volume)
             "sector",        # Index 5
             "industry",      # Index 6
             "country",       # Index 7
