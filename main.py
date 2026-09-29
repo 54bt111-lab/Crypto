@@ -76,17 +76,23 @@ def fetch_filtered_stocks(session_type):
         change_field = "postmarket_change"
         volume_field = "postmarket_volume"
 
+    # الفلاتر الأساسية
+    filters = [
+        {"left": "float_shares_outstanding_current", "operation": "less", "right": 50_000_000},
+        {"left": volume_field, "operation": "greater", "right": 30_000},
+        {"left": change_field, "operation": "greater", "right": 2.0},
+        {"left": "average_volume_10d_calc", "operation": "greater", "right": 100_000},
+        {"left": "close", "operation": "less", "right": 50.0},
+        {"left": "exchange", "operation": "in_range", "right": ["NYSE", "NASDAQ", "AMEX"]}
+    ]
+
+    # إضافة فلاتر خاصة بالسوق الرئيسي فقط لمنع حجب النتائج في الما قبل/بعد التداول
+    if session_type == "market":
+        filters.append({"left": "Change.5m", "operation": "greater", "right": 0.0})
+        filters.append({"left": "relative_volume_10d_calc", "operation": "greater", "right": 1.5})
+
     payload = {
-        "filter": [
-            {"left": "float_shares_outstanding_current", "operation": "less", "right": 50_000_000},
-            {"left": volume_field, "operation": "greater", "right": 30_000},
-            {"left": change_field, "operation": "greater", "right": 2.0},
-            {"left": "Change.5m", "operation": "greater", "right": 0.0},
-            {"left": "average_volume_10d_calc", "operation": "greater", "right": 100_000},
-            {"left": "relative_volume_10d_calc", "operation": "greater", "right": 1.5},
-            {"left": "close", "operation": "less", "right": 50.0},
-            {"left": "exchange", "operation": "in_range", "right": ["NYSE", "NASDAQ", "AMEX"]}
-        ],
+        "filter": filters,
         "options": {"lang": "en"},
         "symbols": {"query": {"types": []}, "tickers": []},
         "columns": [
@@ -100,13 +106,15 @@ def fetch_filtered_stocks(session_type):
     try:
         response = requests.post(url, json=payload, headers=headers, timeout=12)
         response.raise_for_status()
-        return response.json().get("data", [])
+        data = response.json().get("data", [])
+        print(f"📊 عدد الأسهم المسترجعة من API: {len(data)}")
+        return data
     except Exception as e:
         print(f"❌ خطأ أثناء جلب البيانات: {e}")
         return []
 
 # ================================
-# أدوات المساعدة
+# أدوات المساعدة والإرسال
 # ================================
 def escape_html(text):
     if not text:
@@ -124,8 +132,8 @@ def format_number(num):
 
 def send_telegram(text):
     if not TOKEN or not CHAT_ID:
-        print("⚠️ BOT_TOKEN أو CHAT_ID غير محدد.")
-        return
+        print("⚠️ BOT_TOKEN أو CHAT_ID غير محدد في متغيرات البيئة.")
+        return False
     try:
         res = requests.post(
             f"https://api.telegram.org/bot{TOKEN}/sendMessage",
@@ -138,8 +146,26 @@ def send_telegram(text):
             timeout=15,
         )
         res.raise_for_status()
+        return True
     except Exception as e:
         print(f"❌ خطأ في إرسال التليجرام: {e}")
+        if hasattr(e, 'response') and e.response is not None:
+            print(f" تفاصيل رد تليجرام: {e.response.text}")
+        return False
+
+def send_in_chunks(header, blocks):
+    """تقسيم الرسالة إلى أجزاء لتفادي تجاوز حد تليجرام (4096 حرفاً)"""
+    current_message = header + "\n\n"
+    
+    for block in blocks:
+        if len(current_message) + len(block) + 2 > 3900:  # حد أمان
+            send_telegram(current_message)
+            current_message = block + "\n\n"
+        else:
+            current_message += block + "\n\n"
+            
+    if current_message.strip():
+        send_telegram(current_message)
 
 # ================================
 # التنفيذ لمرة واحدة (Single Run)
@@ -200,8 +226,7 @@ def main():
             blocks.append("\n".join(lines))
 
         save_seen(today, counts)
-        full_message = header + "\n\n" + "\n\n".join(blocks)
-        send_telegram(full_message)
+        send_in_chunks(header, blocks)
         print(f"✅ تم إرسال {len(blocks)} سهم بنجاح.")
     else:
         print(f"ℹ️ [{now_str}] لا توجد أسهم تطابق الشروط حالياً.")
