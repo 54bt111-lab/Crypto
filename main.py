@@ -1,359 +1,108 @@
-import json
 import os
-import sys
-import time
+import requests
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
-import pandas as pd
-import requests
-
-# إعدادات التلغرام من متغيرات البيئة
+# ================================
+# إعدادات التلغرام والبيئة
+# ================================
 TOKEN = os.environ.get("BOT_TOKEN", "")
 CHAT_ID = os.environ.get("CHAT_ID", "")
 
 RIYADH = ZoneInfo("Asia/Riyadh")
-SEEN_FILE = "seen_crypto.json"
-EXCHANGE_NAME = "BINANCE"
-
 MAX_SHOWN = 10
 
+def get_current_session():
+    now = datetime.now(RIYADH)
+    time_num = now.hour * 100 + now.minute
 
-def get_crypto_info_dict():
-    """قاموس المعلومات الشاملة للعملات (الاسم، المقر، ومشروع العملة)"""
-    return {
-        "BTCUSDT": {
-            "name": "بيتكوين", 
-            "country": "🌐 لا مركزي (عالمي)", 
-            "project": "أول عملة رقمية مشفرة، وتعد الذهب الرقمي ومخزنًا للقيمة."
-        },
-        "ETHUSDT": {
-            "name": "إيثريوم", 
-            "country": "🇨🇭 سويسرا", 
-            "project": "منصة العقود الذكية والفراموورك الأساسي للطبقة الأولى (L1) والتطبيقات اللامركزية (DeFi)."
-        },
-        "SOLUSDT": {
-            "name": "سولانا", 
-            "country": "🇺🇸 الولايات المتحدة", 
-            "project": "شبكة بلوكشين عالية السرعة والإنتاجية مخصصة للتطبيقات اللامركزية والـ NFTs."
-        },
-        "BNBUSDT": {
-            "name": "بينانس كوين", 
-            "country": "🇦🇪 الإمارات / عالمي", 
-            "project": "العملة الأساسية لمنظومة Binance وشبكة BNB Chain للرسوم والتداول."
-        },
-        "XRPUSDT": {
-            "name": "ريبل", 
-            "country": "🇺🇸 الولايات المتحدة", 
-            "project": "شبكة تسوية ومدفوعات سريعة ومخفضة التكلفة للمؤسسات المالية والبنوك."
-        },
-        "HBARUSDT": {
-            "name": "هيديرا", 
-            "country": "🇺🇸 الولايات المتحدة", 
-            "project": "شبكة distributed ledger تعتمد تقنية Hashgraph لتوفير سرعة فائقة ورسوم منخفضة."
-        },
-        "ALGOUSDT": {
-            "name": "ألغوراند", 
-            "country": "🇺🇸 الولايات المتحدة", 
-            "project": "منصة بلوكشين تعتمد إثبات الحصة الخالص لتوفير أمان وسرعة معاملات عالية."
-        },
-        "XLMUSDT": {
-            "name": "ستيلار", 
-            "country": "🇺🇸 الولايات المتحدة", 
-            "project": "شبكة مدفوعات مفتوحة المصدر لتسهيل نقل الأموال والعملات عبر الحدود."
-        },
-        "CROUSDT": {
-            "name": "كرونوس", 
-            "country": "🇸🇬 سنغافورة", 
-            "project": "العملة الأساسية لمنظومة Crypto.com وسلسلة Cronos اللامركزية."
-        },
-        "STRKUSDT": {
-            "name": "ستارك نت", 
-            "country": "🌐 عالمي", 
-            "project": "حل طبقة ثانية (L2) لشبكة إيثريوم يعتمد تقنية STARK ZK-Rollups لخفض الرسوم."
-        },
-        "GRTUSDT": {
-            "name": "ذا جراف", 
-            "country": "🇺🇸 الولايات المتحدة", 
-            "project": "بروتوكول أرشفة واستعلام عن بيانات البلوكشين (Indexing Protocol)."
-        },
-        "POLUSDT": {
-            "name": "بوليكون (POL)", 
-            "country": "🇮🇳 الهند / عالمي", 
-            "project": "العملة المحدثة لشبكة Polygon لتأمين وتوسيع شبكات الطبقة الثانية."
-        },
-        "VETUSDT": {
-            "name": "في تشين", 
-            "country": "🇸🇬 سنغافورة", 
-            "project": "منصة بلوكشين متخصصة في إدارة سلاسل الإمداد وتتبع المنتجات."
-        },
-        "ADAUSDT": {
-            "name": "كاردانو", 
-            "country": "🇨🇭 سويسرا / 🇯🇵 اليابان", 
-            "project": "منصة بلوكشين تعتمد على البحث العلمي والعقود الذكية الآمنة."
-        },
-        "AVAXUSDT": {
-            "name": "أفالانش", 
-            "country": "🇺🇸 الولايات المتحدة", 
-            "project": "منصة عقود ذكية تتميز بالسرعة الفائقة والتوافق مع شبكات الشبكات المخصصة (Subnets)."
-        },
-        "DOGEUSDT": {
-            "name": "دوجكوين", 
-            "country": "🇺🇸 الولايات المتحدة", 
-            "project": "عملة ميم رقمية تحولت إلى وسيلة مدفوعات واسعة الانتشار بدعم مجتمعي."
-        },
-        "DOTUSDT": {
-            "name": "بولكادوت", 
-            "country": "🇨🇭 سويسرا", 
-            "project": "بروتوكول يربط عدة شبكات بلوكشين ببعضها لتسهيل نقل البيانات والأصول."
-        },
-        "LINKUSDT": {
-            "name": "شينلينك", 
-            "country": "🇺🇸 الولايات المتحدة", 
-            "project": "شبكة أوراكل (Oracle) لامركزية تزود العقود الذكية بالبيانات الحقيقية من خارج البلوكشين."
-        },
-        "SUIUSDT": {
-            "name": "سوي", 
-            "country": "🇺🇸 الولايات المتحدة", 
-            "project": "بلوكشين طبقة أولى مبتكر يعتمد لغة Move لتوفير معالجة فورية وألعاب وسرعة فائقة."
-        },
-        "NEARUSDT": {
-            "name": "نير بروتوكول", 
-            "country": "🇨🇭 سويسرا", 
-            "project": "منصة سحابية لامركزية تركز على سهولة استخدام المطورين وتجزئة البيانات (Sharding)."
-        },
-        "LTCUSDT": {
-            "name": "لايتكوين", 
-            "country": "🇸🇬 سنغافورة", 
-            "project": "شبكة مدفوعات رقمية خفيفة وسريعة تُعتبر النسخة الفضية للبيتكوين."
-        },
-        "BCHUSDT": {
-            "name": "بيتكوين كاش", 
-            "country": "🌐 لا مركزي (عالمي)", 
-            "project": "تفرع من البيتكوين يقدم أحجام كتل أكبر لتسهيل المعاملات اليومية والتجارية."
-        },
-        "FETUSDT": {
-            "name": "أليانس إيه آي (ASI)", 
-            "country": "🇬🇧 المملكة المتحدة", 
-            "project": "تحالف الذكاء الاصطناعي اللامركزي لبناء وكلاء ذكيين واقتصاد آلي."
-        },
-        "RENDERUSDT": {
-            "name": "رندر", 
-            "country": "🇺🇸 الولايات المتحدة", 
-            "project": "شبكة معالجة جرافيكس (GPU) لامركزية لتقديم خدمات الرندر والتصميم والذكاء الاصطناعي."
-        },
-        "INJUSDT": {
-            "name": "إنجيكتيف", 
-            "country": "🇺🇸 الولايات المتحدة", 
-            "project": "بلوكشين مخصص للتطبيقات المالية اللامركزية (DeFi) والتداول بالهوامش."
-        },
-        "PEPEUSDT": {
-            "name": "بيبي", 
-            "country": "🌐 لا مركزي (عالمي)", 
-            "project": "عملة ميم شهيرة تعتمد على الثقافة الرقمية وشعبية مجتمع الكريبتو."
-        },
-        "SHIBUSDT": {
-            "name": "شيبا إينو", 
-            "country": "🌐 لا مركزي (عالمي)", 
-            "project": "منظومة ميم متكاملة تضم منصة تداول لامركزية (ShibaSwap) وشبكة طبقة ثانية (Shibarium)."
-        },
-        "WIFUSDT": {
-            "name": "دوج ويف هات", 
-            "country": "🌐 لا مركزي (عالمي)", 
-            "project": "عملة ميم شهيرة قائمة على شبكة سولانا."
-        },
-        "ENAUSDT": {
-            "name": "إيثينا", 
-            "country": "🇵🇦 بنما", 
-            "project": "بروتوكول دولار اصطناعي (USDe) يعمل على توفير سندات رقمية ومستقرة."
-        },
-        "ARBUSDT": {
-            "name": "أربتروم", 
-            "country": "🇺🇸 الولايات المتحدة", 
-            "project": "حل طبقة ثانية (L2) لشبكة إيثريوم يهدف لخفض الرسوم وزيادة السرعة باستخدام Optimistic Rollups."
-        },
-        "OPUSDT": {
-            "name": "أوبتيميزم", 
-            "country": "🇺🇸 الولايات المتحدة", 
-            "project": "شبكة تسريع وتحسين كفاءة إيثريوم بالطبقة الثانية (L2)."
-        },
-        "TIAUSDT": {
-            "name": "سيليستيا", 
-            "country": "🇱🇮 ليختنشتاين", 
-            "project": "أول شبكة بلوكشين نموذجية (Modular) متخصصة في توفير وتأمين البيانات."
-        },
-        "SEIUSDT": {
-            "name": "سي", 
-            "country": "🇺🇸 الولايات المتحدة", 
-            "project": "بلوكشين سريع جداً مخصص ومتخصص لمنصات التداول المباشر."
-        },
-        "TAOUSDT": {
-            "name": "بيتنسور", 
-            "country": "🇨🇦 كندا", 
-            "project": "شبكة لامركزية لتدريب ومشاركة نماذج الذكاء الاصطناعي (Machine Learning)."
-        },
-        "UNIUSDT": {
-            "name": "يوني سواب", 
-            "country": "🇺🇸 الولايات المتحدة", 
-            "project": "أكبر منصة تداول وتبادل لامركزي (DEX) في سوق الكريبتو."
-        },
-        "AAVEUSDT": {
-            "name": "آفي", 
-            "country": "🇬🇧 المملكة المتحدة", 
-            "project": "بروتوكول سيولة لامركزي مخصص للإقراض والاقتراض المالي."
-        },
-        "FLOKIUSDT": {
-            "name": "فلوكي", 
-            "country": "🌐 لا مركزي (عالمي)", 
-            "project": "مشروع ميم تطور ليشمل ألعاب متافيرس (Valhalla) ومنصات تعليمية."
-        },
-        "BONKUSDT": {
-            "name": "بونك", 
-            "country": "🌐 لا مركزي (عالمي)", 
-            "project": "عملة مجتمعية مبنية على سولانا لدعم منظومة المنصات والتطبيقات."
-        }
-    }
-
-
-def parse_ticker_data(data):
-    """معالجة استجابة البيانات وتصفية عملات USDT"""
-    records = []
-    for item in data:
-        symbol = item.get("symbol", "")
-        if symbol.endswith("USDT") and not any(x in symbol for x in ["UPUSDT", "DOWNUSDT", "BULLUSDT", "BEARUSDT"]):
-            try:
-                price = float(item["lastPrice"])
-                change = float(item["priceChangePercent"])
-                volume = float(item["quoteVolume"])
-                high = float(item["highPrice"])
-                low = float(item["lowPrice"])
-
-                if price > 0:
-                    pct_from_low = ((price - low) / low * 100) if low > 0 else 0.0
-                    records.append({
-                        "ticker": symbol,
-                        "price": price,
-                        "change": change,
-                        "quoteVolume": volume,
-                        "high_52": high,
-                        "low_52": low,
-                        "pct_from_low": pct_from_low
-                    })
-            except (ValueError, KeyError):
-                continue
-
-    df = pd.DataFrame(records)
-    if not df.empty:
-        df = df.sort_values(by="change", ascending=False)
-    return df
-
-
-def fetch_crypto_multi_source():
-    """جلب بيانات السوق مع مصادر احتياطية متعددة لتفادي حظر السيرفرات"""
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-    }
-
-    # المصدر 1: Binance Global
-    try:
-        url = "https://api.binance.com/api/v3/ticker/24hr"
-        resp = requests.get(url, headers=headers, timeout=10)
-        resp.raise_for_status()
-        df = parse_ticker_data(resp.json())
-        if not df.empty:
-            return df, "Binance Global API"
-    except Exception as e:
-        print(f"⚠️ Binance API error: {e}")
-
-    # المصدر 2 الاحتياطي: MEXC Global (فائقة السرعة ولا تحظر السيرفرات السحابية)
-    try:
-        url = "https://api.mexc.com/api/v3/ticker/24hr"
-        resp = requests.get(url, headers=headers, timeout=10)
-        resp.raise_for_status()
-        df = parse_ticker_data(resp.json())
-        if not df.empty:
-            return df, "MEXC Global API (احتياطي)"
-    except Exception as e:
-        print(f"⚠️ MEXC API error: {e}")
-
-    # المصدر 3 الاحتياطي: CoinGecko API
-    try:
-        cg_url = "https://api.coingecko.com/api/v3/coins/markets"
-        params = {
-            "vs_currency": "usd",
-            "order": "price_change_percentage_24h_desc",
-            "per_page": 250,
-            "page": 1,
-            "sparkline": "false"
-        }
-        resp = requests.get(cg_url, params=params, headers=headers, timeout=12)
-        resp.raise_for_status()
-        cg_data = resp.json()
-
-        records = []
-        for coin in cg_data:
-            price = float(coin.get("current_price", 0.0) or 0.0)
-            high = float(coin.get("high_24h", 0.0) or 0.0)
-            low = float(coin.get("low_24h", 0.0) or 0.0)
-            pct_from_low = ((price - low) / low * 100) if low > 0 else 0.0
-
-            records.append({
-                "ticker": f"{coin['symbol'].upper()}USDT",
-                "price": price,
-                "change": float(coin.get("price_change_percentage_24h", 0.0) or 0.0),
-                "quoteVolume": float(coin.get("total_volume", 0.0) or 0.0),
-                "high_52": high,
-                "low_52": low,
-                "pct_from_low": pct_from_low
-            })
-
-        df_cg = pd.DataFrame(records).sort_values(by="change", ascending=False)
-        if not df_cg.empty:
-            return df_cg, "CoinGecko API (احتياطي)"
-    except Exception as e:
-        print(f"⚠️ CoinGecko API error: {e}")
-
-    return pd.DataFrame(), "تعذر الاتصال"
-
-
-def get_activity_status(change, volume_m):
-    if change >= 5.0 and volume_m >= 50:
-        return "⚡ نشاط قوي وانفجار سيولة"
-    elif change >= 2.0:
-        return "🔥 زخم صعودي إيجابي"
-    elif change < 0:
-        return "📉 تصحيح وهدوء نسبي"
+    if 1100 <= time_num < 1630:
+        return "premarket", "🌅 Pre-Market (ما قبل الافتتاح)"
+    elif 1630 <= time_num < 2300:
+        return "market", "🔔 Main Session (السوق الرئيسي)"
+    elif time_num >= 2300 or time_num < 300:
+        return "postmarket", "🌙 Post-Market (ما بعد الإغلاق)"
     else:
-        return "📊 تداول اعتادي"
+        # للاختبار خارج أوقات العمل، نفحص على بيانات السوق الرئيسي
+        return "market", "🧪 وضع الاختبار التجريبي"
 
+def fetch_filtered_stocks(session_type):
+    url = "https://scanner.tradingview.com/america/scan"
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+        "Content-Type": "application/json"
+    }
 
-def load_seen():
-    today = datetime.now(RIYADH).strftime("%Y-%m-%d")
+    change_field = "change"
+    volume_field = "volume"
+    
+    if session_type == "premarket":
+        change_field = "premarket_change"
+        volume_field = "premarket_volume"
+    elif session_type == "postmarket":
+        change_field = "postmarket_change"
+        volume_field = "postmarket_volume"
+
+    payload = {
+        "filter": [
+            {"left": "float_shares_outstanding_current", "operation": "less", "right": 50_000_000},
+            {"left": volume_field, "operation": "greater", "right": 30_000},
+            {"left": change_field, "operation": "greater", "right": 2.0},
+            {"left": "Change.5m", "operation": "greater", "right": 0.0},
+            {"left": "average_volume_10d_calc", "operation": "greater", "right": 100_000},
+            {"left": "relative_volume_10d_calc", "operation": "greater", "right": 1.5},
+            {"left": "close", "operation": "less", "right": 50.0},
+            {"left": "exchange", "operation": "in_range", "right": ["NYSE", "NASDAQ", "AMEX"]}
+        ],
+        "options": {"lang": "en"},
+        "symbols": {"query": {"types": []}, "tickers": []},
+        "columns": [
+            "name",
+            "description",
+            "close",
+            change_field,
+            volume_field,
+            "sector",
+            "industry",
+            "country",
+            "float_shares_outstanding_current",
+            "average_volume_10d_calc",
+            "relative_volume_10d_calc",
+            "Change.5m",
+            "exchange"
+        ],
+        "sort": {"sortBy": change_field, "sortOrder": "desc"},
+        "range": [0, MAX_SHOWN]
+    }
+
     try:
-        with open(SEEN_FILE) as f:
-            data = json.load(f)
-        if data.get("date") == today:
-            return today, data.get("counts", {})
-    except (FileNotFoundError, json.JSONDecodeError):
-        pass
-    return today, {}
+        response = requests.post(url, json=payload, headers=headers, timeout=12)
+        response.raise_for_status()
+        return response.json().get("data", [])
+    except Exception as e:
+        print(f"❌ خطأ أثناء جلب البيانات: {e}")
+        return []
 
+def escape_html(text):
+    if not text:
+        return "غير محدد"
+    return str(text).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
-def save_seen(today, counts):
-    with open(SEEN_FILE, "w") as f:
-        json.dump({
-            "date": today,
-            "counts": counts,
-            "last_run_timestamp": time.time()
-        }, f, indent=2)
+def format_number(num):
+    if not num:
+        return "0"
+    if num >= 1_000_000:
+        return f"{num / 1_000_000:.2f}M"
+    elif num >= 1_000:
+        return f"{num / 1_000:.1f}K"
+    return f"{num:.2f}"
 
-
-def send(text):
+def send_telegram(text):
     if not TOKEN or not CHAT_ID:
-        print("تحذير: BOT_TOKEN أو CHAT_ID غير موجود.")
+        print("⚠️ BOT_TOKEN أو CHAT_ID غير محدد في متغيرات البيئة.")
         return
     try:
-        r = requests.post(
+        res = requests.post(
             f"https://api.telegram.org/bot{TOKEN}/sendMessage",
             data={
                 "chat_id": CHAT_ID,
@@ -361,114 +110,71 @@ def send(text):
                 "parse_mode": "HTML",
                 "disable_web_page_preview": True,
             },
-            timeout=20,
+            timeout=15,
         )
-        r.raise_for_status()
-    except requests.exceptions.HTTPError as e:
-        print(f"خطأ تيليجرام: {e} - النص المطلوب إرساله: {e.response.text if e.response else ''}")
+        res.raise_for_status()
+        print("✅ تم إرسال رسالة الاختبار بنجاح إلى التليجرام!")
+    except Exception as e:
+        print(f"❌ خطأ في الإرسال: {e}")
 
+def test_run():
+    now_str = datetime.now(RIYADH).strftime("%H:%M:%S")
+    session_key, session_name = get_current_session()
 
-def escape_html(value) -> str:
-    return (
-        str(value)
-        .replace("&", "&amp;")
-        .replace("<", "&lt;")
-        .replace(">", "&gt;")
-    )
+    print(f"🧪 [اختبار فوري] جاري جلب الأسهم... ({now_str} KSA)")
+    stocks = fetch_filtered_stocks(session_key)
 
-
-def calculate_levels(price):
-    return {
-        "support": price * 0.98,
-        "t1": price * 1.02,
-        "t2": price * 1.04,
-        "t3": price * 1.06,
-        "stop_loss": price * 0.96,
-    }
-
-
-def main():
-    today, counts = load_seen()
-    now_time = datetime.now(RIYADH).strftime("%H:%M:%S")
-
-    print(f"⏰ [{now_time}] جاري فحص جميع مصادر السوق والاتصال المباشر...")
-
-    df, source_name = fetch_crypto_multi_source()
-    crypto_info = get_crypto_info_dict()
-
-    if df.empty:
-        print("❌ تعذر جلب البيانات من كافة المصادر.")
-        send("⚠️ تعذر جلب البيانات في الوقت الحالي.")
+    if not stocks:
+        print("ℹ️ لم يتم العثور على أسهم تطابق الشروط حالياً، جاري إرسال رسالة تجريبية...")
+        send_telegram(f"🧪 <b>تأكيد اتصال البوت</b>\n📅 الوقت: <code>{now_str} KSA</code>\nℹ️ لا توجد أسهم تطابق كافة الشروط حالياً.")
         return
 
-    header = f"🚨 <b>تحديث سوق الكريبتو (أعلى العملات صعوداً)</b>\n📡 <b>المصدر:</b> <code>{source_name}</code>"
+    header = (
+        f"🧪 <b>تنسيق تقرير الاختبار الفوري</b>\n"
+        f"⏱️ <b>الجلسة:</b> {session_name}\n"
+        f"📅 <b>الوقت:</b> <code>{now_str} KSA</code>\n"
+        f"-----------------------------------"
+    )
+    
     blocks = []
+    for idx, item in enumerate(stocks, 1):
+        d = item.get("d", [])
+        if len(d) < 13:
+            continue
 
-    for idx, (_, row) in enumerate(df.head(MAX_SHOWN).iterrows(), 1):
-        ticker = str(row["ticker"])
-        clean_symbol = ticker.replace("USDT", "")
+        symbol = escape_html(d[0])
+        company_name = escape_html(d[1])
+        price = float(d[2] or 0)
+        change_pct = float(d[3] or 0)
+        volume = float(d[4] or 0)
+        sector = escape_html(d[5])
+        industry = escape_html(d[6])
+        country = escape_html(d[7])
+        float_shares = float(d[8] or 0)
+        avg_vol = float(d[9] or 0)
+        rvol = float(d[10] or 0)
+        change_5m = float(d[11] or 0)
+        exchange = escape_html(d[12])
 
-        info = crypto_info.get(ticker, {})
-        if isinstance(info, dict) and info:
-            arabic_name = escape_html(info.get("name", clean_symbol))
-            country = escape_html(info.get("country", "🌐 غير محدد"))
-            project_desc = escape_html(info.get("project", "مشروع عملة رقمية مشفرة."))
-        else:
-            arabic_name = escape_html(clean_symbol)
-            country = "🌐 غير محدد"
-            project_desc = "مشروع عملة رقمية مشفرة."
-
-        tv_url = f"https://www.tradingview.com/chart/?symbol={EXCHANGE_NAME}:{ticker}"
-
-        price = float(row["price"])
-        change = float(row["change"])
-        usdt_volume = float(row["quoteVolume"]) / 1_000_000
-
-        high_52 = float(row.get("high_52", 0.0))
-        low_52 = float(row.get("low_52", 0.0))
-        pct_from_low = float(row.get("pct_from_low", 0.0))
-
-        activity = get_activity_status(change, usdt_volume)
-
-        curr_count = counts.get(ticker, 0) + 1
-        counts[ticker] = curr_count
-
-        lvl = calculate_levels(price)
+        tv_url = f"https://www.tradingview.com/chart/?symbol={exchange}:{symbol}"
 
         lines = [
-            f"🔥 <b>#{idx} {arabic_name} ({ticker})</b>",
-            f"📍 <b>المقر:</b> {country}",
-            f"💡 <b>المشروع:</b> {project_desc}",
-            f"⚡ <b>نشاط العملة:</b> {activity}",
-            f"🚨 🛑 <b>[تنبيه رقم {curr_count}]</b>",
-            f"💵 <b>السعر:</b> ${price:.4f} | <b>التغير 24h:</b> {change:+.2f}%",
-            f"📊 <b>القمة:</b> ${high_52:.4f} | <b>القاع:</b> ${low_52:.4f}",
-            f"📈 <b>الارتفاع عن القاع:</b> +{pct_from_low:.1f}%",
-            f"💰 <b>السيولة المالية:</b> ${usdt_volume:.2f}M USDT",
-            f"🔗 <b>الشارت:</b> <a href='{tv_url}'>فتح في TradingView</a>",
-            f"🎯 <b>الأهداف:</b> ${lvl['t1']:.4f} -&gt; ${lvl['t2']:.4f} -&gt; ${lvl['t3']:.4f}",
-            f"🛡️ <b>الدعم:</b> ${lvl['support']:.4f} | ⛔️ <b>الوقف:</b> ${lvl['stop_loss']:.4f}",
+            f"🔥 <b>#{idx} {symbol}</b> - {company_name}",
+            f"🏛️ <b>البورصة:</b> {exchange} | 🌐 <b>الدولة:</b> {country}",
+            f"🏢 <b>القطاع:</b> {sector}",
+            f"🏭 <b>الصناعة:</b> {industry}",
+            f"💵 <b>السعر:</b> ${price:.2f} | <b>التغير:</b> +{change_pct:.2f}%",
+            f"⚡ <b>أداء 5 دقائق:</b> +{change_5m:.2f}%",
+            f"📊 <b>الحجم:</b> {format_number(volume)}",
+            f"📈 <b>RVOL:</b> {rvol:.2f}x | <b>المتوسط:</b> {format_number(avg_vol)}",
+            f"🏊 <b>Float:</b> {format_number(float_shares)}",
+            f"🔗 <b>الشارت:</b> <a href='{tv_url}'>TradingView</a>",
             "-----------------------------------"
         ]
         blocks.append("\n".join(lines))
 
-    if blocks:
-        half = len(blocks) // 2
-        part1 = blocks[:half]
-        part2 = blocks[half:]
-
-        msg1 = header + "\n\n" + "\n\n".join(part1)
-        send(msg1)
-        time.sleep(1)
-
-        if part2:
-            msg2 = "📌 <b>تتمة التقرير:</b>\n\n" + "\n\n".join(part2)
-            send(msg2)
-
-        print(f"✅ تم إرسال {len(blocks)} عملة مقسمة بنجاح عبر المصدر ({source_name}).")
-
-    save_seen(today, counts)
-
+    full_message = header + "\n\n" + "\n\n".join(blocks)
+    send_telegram(full_message)
 
 if __name__ == "__main__":
-    main()
+    test_run()
