@@ -12,7 +12,7 @@ CHAT_ID = os.environ.get("CHAT_ID", "")
 
 RIYADH = ZoneInfo("Asia/Riyadh")
 SEEN_FILE = "seen_stocks.json"
-MAX_SHOWN = 10
+MAX_SHOWN = 25  # تم تعديل عدد النتائج المسترجعة إلى 25
 
 # ================================
 # إدارة ملف التكرارات والتحقق اليومي
@@ -83,7 +83,7 @@ def fetch_filtered_stocks(session_type):
     # الفلاتر الأساسية لجميع الجلسات
     filters = [
         {"left": "float_shares_outstanding_current", "operation": "less", "right": 50_000_000},
-        {"left": volume_field, "operation": "greater", "right": 30_000},
+        {"left": volume_field, "operation": "greater", "right": 15_000},  # تم تعديل شرط الحجم ليكون أكبر من 15,000
         {"left": change_field, "operation": "greater", "right": 2.0},
         {"left": "average_volume_10d_calc", "operation": "greater", "right": 100_000},
         {"left": "close", "operation": "less", "right": 50.0},
