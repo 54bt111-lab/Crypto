@@ -80,7 +80,7 @@ def fetch_filtered_stocks(session_type):
         change_field = "postmarket_change"
         volume_field = "postmarket_volume"
 
-    # الفلاتر الأساسية
+    # الفلاتر الأساسية لجميع الجلسات
     filters = [
         {"left": "float_shares_outstanding_current", "operation": "less", "right": 50_000_000},
         {"left": volume_field, "operation": "greater", "right": 30_000},
@@ -90,10 +90,9 @@ def fetch_filtered_stocks(session_type):
         {"left": "exchange", "operation": "in_range", "right": ["NYSE", "NASDAQ", "AMEX"]}
     ]
 
-    # فلاتر خاصة بالسوق الرئيسي فقط
+    # فلاتر إضافية خاصة بالسوق الرئيسي
     if session_type == "market":
-        filters.append({"left": "Change.5m", "operation": "greater", "right": 0.0})
-        filters.append({"left": "relative_volume_10d_calc", "operation": "greater", "right": 1.5})
+        filters.append({"left": "relative_volume_10d_calc", "operation": "greater", "right": 1.2})
 
     payload = {
         "filter": filters,
@@ -102,9 +101,9 @@ def fetch_filtered_stocks(session_type):
         "columns": [
             "name",          # Index 0
             "description",   # Index 1
-            price_field,     # Index 2: السعر المباشر للجلسة (premarket_close / postmarket_close / close)
-            change_field,    # Index 3
-            volume_field,    # Index 4
+            price_field,     # Index 2: السعر المباشر للجلسة الحالية
+            change_field,    # Index 3: نسبة التغير للجلسة الحالية
+            volume_field,    # Index 4: الحجم للجلسة الحالية
             "sector",        # Index 5
             "industry",      # Index 6
             "country",       # Index 7
@@ -123,6 +122,8 @@ def fetch_filtered_stocks(session_type):
         return data
     except Exception as e:
         print(f"❌ خطأ أثناء جلب البيانات: {e}")
+        if hasattr(e, 'response') and e.response is not None:
+            print(f" تفاصيل رد السيرفر: {e.response.text}")
         return []
 
 # ================================
